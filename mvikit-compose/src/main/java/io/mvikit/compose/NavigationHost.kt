@@ -75,6 +75,20 @@ fun navigationGraph(
 }
 
 /**
+ * Automatically loads and registers all [NavigationModule] instances on the classpath.
+ */
+fun NavigationGraphBuilder.registerAllModules(navigator: Navigator) {
+    val loader = java.util.ServiceLoader.load(
+        NavigationModule::class.java,
+        NavigationModule::class.java.classLoader
+    )
+    for (module in loader) {
+        module.registerScreens(this, navigator)
+        module.registerDeepLinks()
+    }
+}
+
+/**
  * The standard Navigation Host container for Jetpack Compose.
  *
  * Renders the top screen of the backstack, listens for UI side effects (Toasts, Dialogs, sheets,

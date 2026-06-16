@@ -36,6 +36,7 @@ android {
     sourceSets {
         getByName("main") {
             java.srcDir("build/generated/ksp/debug/kotlin")
+            resources.srcDir("build/generated/ksp/debug/resources")
         }
     }
 }
@@ -59,6 +60,8 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.ktx)
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(project(":mvikit-ksp"))
+    testImplementation(libs.org.jetbrains.kotlin.ksp)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     androidTestImplementation(libs.androidx.espresso.core)

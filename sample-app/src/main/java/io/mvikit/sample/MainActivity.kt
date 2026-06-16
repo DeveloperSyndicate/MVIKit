@@ -15,7 +15,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import io.mvikit.compose.MviKitNavigationHost
 import io.mvikit.compose.navigationGraph
-import io.mvikit.generated.navigation.registerAllGeneratedScreens
+import io.mvikit.compose.registerAllModules
 import io.mvikit.navigation.NavigatorImpl
 import io.mvikit.sample.ui.theme.MVIKitSampleAppTheme
 
@@ -29,7 +29,7 @@ class MainActivity : ComponentActivity() {
 
                 val graph = remember {
                     navigationGraph(LoginScreen()) {
-                        registerAllGeneratedScreens(navigator)
+                        registerAllModules(navigator)
                         initializeViewTreeOwners()
                     }
                 }

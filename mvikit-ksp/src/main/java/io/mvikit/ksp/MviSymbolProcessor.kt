@@ -43,6 +43,9 @@ class MviSymbolProcessor(
         processed = true
 
         try {
+            // Run diagnostics validation first
+            runDiagnostics(resolver)
+
             // 1. Process @Form and generate validators
             processForms(resolver)
 
@@ -61,6 +64,52 @@ class MviSymbolProcessor(
         }
 
         return emptyList()
+    }
+
+    private fun runDiagnostics(resolver: Resolver) {
+        // Validate @Form
+        val formSymbols = resolver.getSymbolsWithAnnotation("io.mvikit.annotations.Form").toList()
+        for (symbol in formSymbols) {
+            if (symbol !is KSClassDeclaration || symbol.classKind != ClassKind.CLASS || !symbol.modifiers.contains(com.google.devtools.ksp.symbol.Modifier.DATA)) {
+                logger.error("@Form annotation can only be applied to Kotlin data classes", symbol)
+            }
+        }
+
+        // Validate @MviViewModel
+        val vmSymbols = resolver.getSymbolsWithAnnotation("io.mvikit.annotations.MviViewModel").toList()
+        for (symbol in vmSymbols) {
+            if (symbol !is KSClassDeclaration || symbol.classKind != ClassKind.CLASS) {
+                logger.error("@MviViewModel annotation can only be applied to Kotlin classes", symbol)
+            }
+        }
+
+        // Validate @IntentHandler
+        val intentHandlerSymbols = resolver.getSymbolsWithAnnotation("io.mvikit.annotations.IntentHandler").toList()
+        for (symbol in intentHandlerSymbols) {
+            if (symbol !is KSFunctionDeclaration) continue
+            val parent = symbol.parentDeclaration
+            val isParentMviViewModel = parent is KSClassDeclaration && parent.annotations.any {
+                val name = it.annotationType.resolve().declaration.qualifiedName?.asString()
+                name == "io.mvikit.annotations.MviViewModel"
+            }
+            if (!isParentMviViewModel) {
+                logger.error("@IntentHandler can only be declared inside @MviViewModel annotated classes", symbol)
+            }
+        }
+
+        // Validate @MviAction
+        val mviActionSymbols = resolver.getSymbolsWithAnnotation("io.mvikit.annotations.MviAction").toList()
+        for (symbol in mviActionSymbols) {
+            if (symbol !is KSFunctionDeclaration) continue
+            val parent = symbol.parentDeclaration
+            val isParentMviViewModel = parent is KSClassDeclaration && parent.annotations.any {
+                val name = it.annotationType.resolve().declaration.qualifiedName?.asString()
+                name == "io.mvikit.annotations.MviViewModel"
+            }
+            if (!isParentMviViewModel) {
+                logger.error("@MviAction can only be declared inside @MviViewModel annotated classes", symbol)
+            }
+        }
     }
 
     // --- Helper to get default values for state fields ---
@@ -93,8 +142,7 @@ class MviSymbolProcessor(
     private fun processForms(resolver: Resolver) {
         val formSymbols = resolver.getSymbolsWithAnnotation("io.mvikit.annotations.Form").toList()
         for (symbol in formSymbols) {
-            if (symbol !is KSClassDeclaration || symbol.classKind != ClassKind.CLASS) {
-                logger.error("@Form can only be applied to data classes", symbol)
+            if (symbol !is KSClassDeclaration || symbol.classKind != ClassKind.CLASS || !symbol.modifiers.contains(com.google.devtools.ksp.symbol.Modifier.DATA)) {
                 continue
             }
 
@@ -810,27 +858,36 @@ class MviSymbolProcessor(
             .toSet()
             .toTypedArray()
 
+        // Generate Module-specific NavigationModule class
+        val firstScreen = allScreens.values.first()
+        val screenPackage = firstScreen.fqName.substringBeforeLast('.')
+        val moduleSegment = screenPackage.substringAfterLast('.').replaceFirstChar { it.uppercase() }
+        val moduleClassName = "${moduleSegment}NavigationModule"
+
         val file = createNewFileSafe(
             Dependencies(aggregating = true, *sourceFiles),
             "io.mvikit.generated.navigation",
-            "GeneratedNavigationRegistry"
+            moduleClassName
         ) ?: return
+
         PrintWriter(OutputStreamWriter(file, "UTF-8")).use { out ->
             out.println("package io.mvikit.generated.navigation")
             out.println()
+            out.println("import io.mvikit.compose.NavigationModule")
+            out.println("import io.mvikit.compose.NavigationGraphBuilder")
             out.println("import io.mvikit.navigation.DeepLinkSystem")
             out.println("import io.mvikit.navigation.Navigator")
             out.println("import io.mvikit.navigation.Screen")
-            out.println("import io.mvikit.compose.NavigationGraphBuilder")
             out.println()
-            out.println("fun registerAllGeneratedDeepLinks() {")
+            out.println("class $moduleClassName : NavigationModule {")
+            out.println("    override fun registerDeepLinks() {")
             for (meta in allScreens.values) {
                 val route = meta.deepLinkRoute ?: continue
-                out.println("    DeepLinkSystem.register(\"$route\") { params ->")
+                out.println("        DeepLinkSystem.register(\"$route\") { params ->")
                 if (meta.isObject) {
-                    out.println("        ${meta.fqName}")
+                    out.println("            ${meta.fqName}")
                 } else {
-                    out.print("        ${meta.fqName}(")
+                    out.print("            ${meta.fqName}(")
                     val paramInits = meta.params.map { p ->
                         val cast = when (p.type) {
                             "Int" -> "?.toIntOrNull()"
@@ -846,26 +903,43 @@ class MviSymbolProcessor(
                     out.print(paramInits.joinToString(", "))
                     out.println(")")
                 }
-                out.println("    }")
+                out.println("        }")
             }
-            out.println("}")
+            out.println("    }")
             out.println()
-
-            out.println("fun NavigationGraphBuilder.registerAllGeneratedScreens(navigator: io.mvikit.navigation.Navigator) {")
+            out.println("    override fun registerScreens(builder: NavigationGraphBuilder, navigator: Navigator) {")
+            out.println("        builder.run {")
             for (meta in allScreens.values) {
                 val viewName = meta.viewName ?: "${meta.simpleName}View"
                 val fqViewName = if (viewName.contains(".")) viewName else "${meta.fqName.substringBeforeLast(".")}.$viewName"
                 if (meta.isObject) {
-                    out.println("    screen<${meta.fqName}> {")
-                    out.println("        $fqViewName(navigator)")
-                    out.println("    }")
+                    out.println("            screen<${meta.fqName}> {")
+                    out.println("                $fqViewName(navigator)")
+                    out.println("            }")
                 } else {
-                    out.println("    screen<${meta.fqName}> { screen ->")
-                    out.println("        $fqViewName(navigator, screen)")
-                    out.println("    }")
+                    out.println("            screen<${meta.fqName}> { screen ->")
+                    out.println("                $fqViewName(navigator, screen)")
+                    out.println("            }")
                 }
             }
+            out.println("        }")
+            out.println("    }")
             out.println("}")
+        }
+
+        // Generate Service Provider Configuration
+        try {
+            val serviceFile = codeGenerator.createNewFile(
+                dependencies = Dependencies(aggregating = true, *sourceFiles),
+                packageName = "",
+                fileName = "META-INF/services/io.mvikit.compose.NavigationModule",
+                extensionName = ""
+            )
+            PrintWriter(OutputStreamWriter(serviceFile, "UTF-8")).use { out ->
+                out.println("io.mvikit.generated.navigation.${moduleClassName}")
+            }
+        } catch (e: Exception) {
+            logger.warn("Could not write ServiceLoader configuration: ${e.message}")
         }
     }
 
