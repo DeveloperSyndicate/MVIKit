@@ -1,6 +1,6 @@
 package io.mvikit.core
 
-import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModel as JetpackViewModel
 import androidx.lifecycle.viewModelScope
 import io.mvikit.core.action.ActionState
 import io.mvikit.core.action.DuplicateActionPolicy
@@ -31,16 +31,16 @@ import kotlinx.coroutines.launch
 /**
  * A lightweight, production-ready ViewModel that implements the Model-View-Intent (MVI) architecture.
  *
- * MviViewModel maintains a single source of truth for the UI [state] and supports sending one-time
+ * ViewModel maintains a single source of truth for the UI [state] and supports sending one-time
  * side [effects] (such as navigation or toasts) to the view.
  *
  * State updates are performed using the [reduce] API or atomically in batches using [transaction].
  * Asynchronous work is executed via [execute], providing automatic retries, cancellation management,
  * duplicate handling, and loading state tracking in [actionState].
  */
-abstract class MviViewModel<STATE : Any, EFFECT : Any>(
+abstract class ViewModel<STATE : Any, EFFECT : Any>(
     initialState: STATE
-) : ViewModel() {
+) : JetpackViewModel() {
 
     private val _state = MutableStateFlow(initialState)
 

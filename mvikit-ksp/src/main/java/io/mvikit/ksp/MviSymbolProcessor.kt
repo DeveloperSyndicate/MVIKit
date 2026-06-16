@@ -8,6 +8,9 @@ import com.google.devtools.ksp.processing.SymbolProcessor
 import com.google.devtools.ksp.symbol.*
 import com.google.devtools.ksp.getDeclaredFunctions
 import com.google.devtools.ksp.getDeclaredProperties
+import com.squareup.kotlinpoet.*
+import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
+import com.squareup.kotlinpoet.ksp.*
 import java.io.OutputStreamWriter
 import java.io.PrintWriter
 import java.io.File
@@ -40,19 +43,16 @@ class MviSymbolProcessor(
         processed = true
 
         try {
-            // 1. Process @GenerateState
-            processGenerateState(resolver)
-
-            // 2. Process @MviScreen
-            processMviScreen(resolver)
-
-            // 3. Process Form annotations and generate validators
+            // 1. Process @Form and generate validators
             processForms(resolver)
 
-            // 4. Process @MviViewModel and @IntentHandler / @Reducer
+            // 2. Process @MviViewModel and generate wrappers, states, intents, etc.
             processViewModels(resolver)
 
-            // 5. Process @Destination, @DeepLink, and @ComposableScreen
+            // 3. Process @MviScreen stubs
+            processMviScreen(resolver)
+
+            // 4. Process @Destination, @DeepLink, and @ComposableScreen
             processNavigation(resolver)
 
         } catch (e: Exception) {
@@ -63,92 +63,605 @@ class MviSymbolProcessor(
         return emptyList()
     }
 
-    private fun getTypeName(typeRef: KSTypeReference): String {
-        val type = typeRef.resolve()
-        val baseName = type.declaration.qualifiedName?.asString() ?: typeRef.toString()
-        val cleanName = when (baseName) {
-            "kotlin.String" -> "String"
-            "kotlin.Boolean" -> "Boolean"
-            "kotlin.Int" -> "Int"
-            "kotlin.Long" -> "Long"
-            "kotlin.Float" -> "Float"
-            "kotlin.Double" -> "Double"
-            "kotlin.collections.List" -> {
-                val arg = type.arguments.firstOrNull()?.type?.let { getTypeName(it) } ?: "Any"
-                "List<$arg>"
-            }
-            "kotlin.collections.Set" -> {
-                val arg = type.arguments.firstOrNull()?.type?.let { getTypeName(it) } ?: "Any"
-                "Set<$arg>"
-            }
-            "kotlin.collections.Map" -> {
-                val arg0 = type.arguments.getOrNull(0)?.type?.let { getTypeName(it) } ?: "Any"
-                val arg1 = type.arguments.getOrNull(1)?.type?.let { getTypeName(it) } ?: "Any"
-                "Map<$arg0, $arg1>"
-            }
-            else -> baseName
-        }
-        return if (type.isMarkedNullable) "$cleanName?" else cleanName
-    }
-
-    private fun getDefaultValue(typeRef: KSTypeReference): String {
-        val type = typeRef.resolve()
-        if (type.isMarkedNullable) return "null"
-        val baseName = type.declaration.qualifiedName?.asString() ?: typeRef.toString()
-        return when (baseName) {
+    // --- Helper to get default values for state fields ---
+    private fun getDefaultValueLiteral(typeName: TypeName): String {
+        if (typeName.isNullable) return "null"
+        return when (typeName.toString()) {
             "kotlin.String" -> "\"\""
             "kotlin.Boolean" -> "false"
             "kotlin.Int" -> "0"
             "kotlin.Long" -> "0L"
             "kotlin.Float" -> "0.0f"
             "kotlin.Double" -> "0.0"
-            "kotlin.collections.List" -> "emptyList()"
-            "kotlin.collections.Set" -> "emptySet()"
-            "kotlin.collections.Map" -> "emptyMap()"
-            else -> "null"
+            "kotlin.collections.Map<kotlin.String, kotlin.String>" -> "emptyMap()"
+            "kotlin.collections.Map<kotlin.String,kotlin.String>" -> "emptyMap()"
+            else -> {
+                if (typeName.toString().startsWith("kotlin.collections.Map")) {
+                    "emptyMap()"
+                } else if (typeName.toString().startsWith("kotlin.collections.List")) {
+                    "emptyList()"
+                } else if (typeName.toString().startsWith("kotlin.collections.Set")) {
+                    "emptySet()"
+                } else {
+                    "null"
+                }
+            }
         }
     }
 
-    // --- 1. State Generator (@GenerateState) ---
-    private fun processGenerateState(resolver: Resolver) {
-        val symbols = resolver.getSymbolsWithAnnotation("io.mvikit.annotations.GenerateState").toList()
-        for (symbol in symbols) {
-            if (symbol !is KSClassDeclaration || symbol.classKind != ClassKind.INTERFACE) {
-                logger.error("@GenerateState can only be applied to interfaces", symbol)
+    // --- 1. Form Generator ---
+    private fun processForms(resolver: Resolver) {
+        val formSymbols = resolver.getSymbolsWithAnnotation("io.mvikit.annotations.Form").toList()
+        for (symbol in formSymbols) {
+            if (symbol !is KSClassDeclaration || symbol.classKind != ClassKind.CLASS) {
+                logger.error("@Form can only be applied to data classes", symbol)
                 continue
             }
 
             val packageName = symbol.packageName.asString()
-            val interfaceName = symbol.simpleName.asString()
-            val stateName = if (interfaceName.endsWith("Contract")) {
-                interfaceName.replace("Contract", "State")
-            } else {
-                "${interfaceName}State"
-            }
+            val className = symbol.simpleName.asString()
+            val validatorName = "${className}Validator"
 
-            val file = createNewFileSafe(
-                dependencies = Dependencies(false, symbol.containingFile!!),
-                packageName = packageName,
-                fileName = stateName
-            ) ?: continue
+            val properties = symbol.getDeclaredProperties().toList()
 
-            PrintWriter(OutputStreamWriter(file, "UTF-8")).use { out ->
-                out.println("package $packageName")
-                out.println()
-                out.println("data class $stateName(")
-                val properties = symbol.getDeclaredProperties()
-                val propLines = properties.map { prop ->
-                    val type = getTypeName(prop.type)
-                    val default = getDefaultValue(prop.type)
-                    "    override val ${prop.simpleName.asString()}: $type = $default"
+            // Prepare validator class spec
+            val validatorClassName = ClassName(packageName, validatorName)
+            val validatorClassBuilder = TypeSpec.classBuilder(validatorClassName)
+                .primaryConstructor(
+                    FunSpec.constructorBuilder()
+                        .addParameter(
+                            ParameterSpec.builder("validationMode", ClassName("io.mvikit.form", "ValidationMode"))
+                                .defaultValue("io.mvikit.form.ValidationMode.ON_CHANGE")
+                                .build()
+                        )
+                        .build()
+                )
+
+            // formInstance property
+            validatorClassBuilder.addProperty(
+                PropertySpec.builder("formInstance", ClassName("io.mvikit.form", "Form"), KModifier.PRIVATE)
+                    .mutable(true)
+                    .addModifiers(KModifier.LATEINIT)
+                    .build()
+            )
+
+            // Initializer block with Form DSL
+            val initBlock = CodeBlock.builder()
+            initBlock.addStatement("formInstance = io.mvikit.form.form(validationMode) {")
+
+            for (prop in properties) {
+                val propName = prop.simpleName.asString()
+                val isString = prop.type.toTypeName().toString() == "kotlin.String"
+
+                if (isString) {
+                    initBlock.addStatement("    field(%S) {", propName)
+                } else {
+                    val def = getDefaultValueLiteral(prop.type.toTypeName())
+                    initBlock.addStatement("    field(%S, %L) {", propName, def)
                 }
-                out.println(propLines.joinToString(",\n"))
-                out.println(") : $interfaceName")
+
+                // Parse form constraints
+                for (ann in prop.annotations) {
+                    val name = ann.shortName.asString()
+                    val args = ann.arguments.associateBy { it.name?.asString() }
+                    when (name) {
+                        "Required" -> {
+                            val msg = args["message"]?.value ?: "Field is required"
+                            initBlock.addStatement("        required(%S)", msg)
+                        }
+                        "Email" -> {
+                            val msg = args["message"]?.value ?: "Invalid email format"
+                            initBlock.addStatement("        email(%S)", msg)
+                        }
+                        "Password" -> {
+                            val min = args["minLength"]?.value ?: 8
+                            val upper = args["requireUppercase"]?.value ?: false
+                            val lower = args["requireLowercase"]?.value ?: false
+                            val spec = args["requireSpecialCharacter"]?.value ?: false
+                            val digit = args["requireDigit"]?.value ?: false
+                            val msg = args["message"]?.value ?: "Password does not meet validation criteria"
+                            initBlock.addStatement("        password(minLength = %L, requireUppercase = %L, requireLowercase = %L, requireSpecialCharacter = %L, requireDigit = %L, message = %S)", min, upper, lower, spec, digit, msg)
+                        }
+                        "MinLength" -> {
+                            val len = args["length"]?.value ?: 0
+                            val msg = args["message"]?.value ?: "Minimum length is $len"
+                            initBlock.addStatement("        minLength(%L, %S)", len, msg)
+                        }
+                        "MaxLength" -> {
+                            val len = args["length"]?.value ?: 0
+                            val msg = args["message"]?.value ?: "Maximum length is $len"
+                            initBlock.addStatement("        maxLength(%L, %S)", len, msg)
+                        }
+                        "Regex" -> {
+                            val pat = args["pattern"]?.value ?: ""
+                            val msg = args["message"]?.value ?: "Format is invalid"
+                            initBlock.addStatement("        regex(%S, %S)", pat, msg)
+                        }
+                        "MatchField" -> {
+                            val ref = args["fieldName"]?.value ?: ""
+                            val msg = args["message"]?.value ?: "Fields do not match"
+                            val fallback = if (isString) "\"\"" else getDefaultValueLiteral(prop.type.toTypeName())
+                            initBlock.addStatement("        match({ if (::formInstance.isInitialized) formInstance.get<%T>(%S).value else %L }, %S)", prop.type.toTypeName(), ref, fallback, msg)
+                        }
+                    }
+                }
+                initBlock.addStatement("    }")
             }
+            initBlock.addStatement("}")
+
+            validatorClassBuilder.addInitializerBlock(initBlock.build())
+
+            // form helper property
+            validatorClassBuilder.addProperty(
+                PropertySpec.builder("form", ClassName("io.mvikit.form", "Form"))
+                    .getter(FunSpec.getterBuilder().addStatement("return formInstance").build())
+                    .build()
+            )
+
+            // validate function
+            val validateMethod = FunSpec.builder("validate")
+                .addParameter("data", ClassName(packageName, className))
+                .returns(ClassName("io.mvikit.form", "ValidationResult"))
+                .addCode(
+                    CodeBlock.builder().apply {
+                        for (prop in properties) {
+                            val name = prop.simpleName.asString()
+                            val type = prop.type.toTypeName()
+                            addStatement("formInstance.get<%T>(%S).updateValue(data.%N)", type, name, name)
+                        }
+                        addStatement("return formInstance.validate()")
+                    }.build()
+                )
+                .build()
+            validatorClassBuilder.addFunction(validateMethod)
+
+            // isValid and validationErrors properties
+            validatorClassBuilder.addProperty(
+                PropertySpec.builder("isValid", BOOLEAN)
+                    .getter(FunSpec.getterBuilder().addStatement("return form.isValid").build())
+                    .build()
+            )
+
+            validatorClassBuilder.addProperty(
+                PropertySpec.builder("validationErrors", Map::class.asClassName().parameterizedBy(STRING, STRING))
+                    .getter(
+                        FunSpec.getterBuilder()
+                            .addStatement("return form.fields.value.mapNotNull { entry -> entry.value.error?.let { err -> entry.key to err } }.toMap()")
+                            .build()
+                    )
+                    .build()
+            )
+
+            // Write File
+            val fileSpec = FileSpec.builder(packageName, validatorName)
+                .addImport("io.mvikit.form", "required")
+                .addImport("io.mvikit.form", "email")
+                .addImport("io.mvikit.form", "password")
+                .addImport("io.mvikit.form", "minLength")
+                .addImport("io.mvikit.form", "maxLength")
+                .addImport("io.mvikit.form", "regex")
+                .addImport("io.mvikit.form", "match")
+                .addType(validatorClassBuilder.build())
+                .build()
+
+            fileSpec.writeTo(codeGenerator, Dependencies(false, symbol.containingFile!!))
         }
     }
 
-    // --- 2. Screen Generator (@MviScreen) ---
+    // --- 2. ViewModel & State & Intent Processor ---
+    private fun processViewModels(resolver: Resolver) {
+        val vmSymbols = resolver.getSymbolsWithAnnotation("io.mvikit.annotations.MviViewModel").toList()
+        val formSymbols = resolver.getSymbolsWithAnnotation("io.mvikit.annotations.Form").toList()
+
+        for (symbol in vmSymbols) {
+            if (symbol !is KSClassDeclaration) continue
+            val packageName = symbol.packageName.asString()
+            val className = symbol.simpleName.asString()
+            val prefix = className.removeSuffix("ViewModel")
+            val hasNoArgConstructor = symbol.primaryConstructor?.parameters?.isEmpty() ?: true
+
+            val dependencies = Dependencies(false, symbol.containingFile!!)
+
+            // Find matching form symbol if any
+            val formSymbol = formSymbols.filterIsInstance<KSClassDeclaration>()
+                .firstOrNull { it.simpleName.asString().removeSuffix("Form") == prefix }
+
+            val functions = symbol.getDeclaredFunctions().toList()
+            val handlers = functions.filter { fn ->
+                fn.annotations.any { it.shortName.asString() == "IntentHandler" }
+            }
+            val actions = functions.filter { fn ->
+                fn.annotations.any { it.shortName.asString() == "MviAction" }
+            }
+
+            // 1. Gather all state properties
+            val stateProperties = mutableMapOf<String, TypeName>()
+
+            // Add fields from form
+            if (formSymbol != null) {
+                for (prop in formSymbol.getDeclaredProperties()) {
+                    stateProperties[prop.simpleName.asString()] = prop.type.toTypeName()
+                }
+            }
+
+            // Add fields from intent handler parameters
+            for (handler in handlers) {
+                for (param in handler.parameters) {
+                    val name = param.name!!.asString()
+                    val type = param.type.toTypeName()
+                    if (stateProperties.containsKey(name) && stateProperties[name] != type) {
+                        logger.error("State property '$name' has conflicting types: ${stateProperties[name]} vs $type", handler)
+                    }
+                    stateProperties[name] = type
+                }
+            }
+
+            // Add standard parameters
+            stateProperties["isLoading"] = BOOLEAN
+            stateProperties["validationErrors"] = Map::class.asClassName().parameterizedBy(STRING, STRING)
+            stateProperties["errorMessage"] = STRING.copy(nullable = true)
+
+            val stateClassName = ClassName(packageName, "${prefix}State")
+            val builderClassName = ClassName(packageName, "${prefix}StateBuilder")
+            val intentClassName = ClassName(packageName, "${prefix}Intent")
+            val effectClassName = ClassName(packageName, "${prefix}Effect")
+            val wrapperClassName = ClassName(packageName, "${prefix}ViewModel_GeneratedWrapper")
+            val vmClassName = ClassName(packageName, className)
+
+            // --- 2.1 Generate State data class ---
+            val stateClassBuilder = TypeSpec.classBuilder(stateClassName)
+                .addModifiers(KModifier.DATA)
+            val stateConstructor = FunSpec.constructorBuilder()
+
+            for ((name, typeName) in stateProperties) {
+                val defaultValue = getDefaultValueLiteral(typeName)
+                stateConstructor.addParameter(
+                    ParameterSpec.builder(name, typeName)
+                        .defaultValue(defaultValue)
+                        .build()
+                )
+                stateClassBuilder.addProperty(
+                    PropertySpec.builder(name, typeName)
+                        .initializer(name)
+                        .build()
+                )
+            }
+            stateClassBuilder.primaryConstructor(stateConstructor.build())
+
+            FileSpec.builder(packageName, "${prefix}State")
+                .addType(stateClassBuilder.build())
+                .build()
+                .writeTo(codeGenerator, dependencies)
+
+            // --- 2.2 Generate StateBuilder class ---
+            val builderClassBuilder = TypeSpec.classBuilder(builderClassName)
+                .primaryConstructor(
+                    FunSpec.constructorBuilder()
+                        .addParameter("state", stateClassName)
+                        .build()
+                )
+
+            for ((name, typeName) in stateProperties) {
+                builderClassBuilder.addProperty(
+                    PropertySpec.builder(name, typeName)
+                        .mutable(true)
+                        .initializer("state.%N", name)
+                        .build()
+                )
+            }
+
+            builderClassBuilder.addFunction(
+                FunSpec.builder("build")
+                    .returns(stateClassName)
+                    .addStatement("return %T(%L)", stateClassName, stateProperties.keys.joinToString(", ") { "$it = $it" })
+                    .build()
+            )
+
+            FileSpec.builder(packageName, "${prefix}StateBuilder")
+                .addType(builderClassBuilder.build())
+                .build()
+                .writeTo(codeGenerator, dependencies)
+
+            // --- 2.3 Generate Intent sealed interface & subclasses ---
+            val intentInterfaceBuilder = TypeSpec.interfaceBuilder(intentClassName)
+                .addModifiers(KModifier.SEALED)
+                .addSuperinterface(ClassName("io.mvikit.core.intent", "Intent"))
+
+            for (handler in handlers) {
+                val methodName = handler.simpleName.asString()
+                val subclassName = methodName.replaceFirstChar { it.uppercase() }
+                val params = handler.parameters
+
+                val subclassSpec = if (params.isEmpty()) {
+                    TypeSpec.objectBuilder(subclassName)
+                        .addSuperinterface(intentClassName)
+                        .build()
+                } else {
+                    val classBuilder = TypeSpec.classBuilder(subclassName)
+                        .addModifiers(KModifier.DATA)
+                        .addSuperinterface(intentClassName)
+
+                    val subclassConstructor = FunSpec.constructorBuilder()
+                    for (param in params) {
+                        val paramName = param.name!!.asString()
+                        val paramType = param.type.toTypeName()
+                        subclassConstructor.addParameter(paramName, paramType)
+                        classBuilder.addProperty(
+                            PropertySpec.builder(paramName, paramType)
+                                .initializer(paramName)
+                                .build()
+                        )
+                    }
+                    classBuilder.primaryConstructor(subclassConstructor.build()).build()
+                }
+                intentInterfaceBuilder.addType(subclassSpec)
+            }
+
+            FileSpec.builder(packageName, "${prefix}Intent")
+                .addType(intentInterfaceBuilder.build())
+                .build()
+                .writeTo(codeGenerator, dependencies)
+
+            // --- 2.4 Generate Effect sealed interface ---
+            val effectInterfaceSpec = TypeSpec.interfaceBuilder(effectClassName)
+                .addModifiers(KModifier.SEALED)
+                .build()
+
+            FileSpec.builder(packageName, "${prefix}Effect")
+                .addType(effectInterfaceSpec)
+                .build()
+                .writeTo(codeGenerator, dependencies)
+
+            // --- 2.5 Generate ViewModel Wrapper class ---
+            val wrapperClassSpecBuilder = TypeSpec.classBuilder(wrapperClassName)
+                .primaryConstructor(
+                    FunSpec.constructorBuilder()
+                        .addParameter("viewModel", vmClassName)
+                        .build()
+                )
+                .addProperty(
+                    PropertySpec.builder("viewModel", vmClassName)
+                        .initializer("viewModel")
+                        .build()
+                )
+                .superclass(ClassName("io.mvikit.core", "ViewModel").parameterizedBy(stateClassName, ANY))
+                .addSuperclassConstructorParameter("%T()", stateClassName)
+
+            if (formSymbol != null) {
+                val validatorClassName = ClassName(packageName, "${prefix}FormValidator")
+                wrapperClassSpecBuilder.addProperty(
+                    PropertySpec.builder("validator", validatorClassName)
+                        .initializer("%T()", validatorClassName)
+                        .build()
+                )
+            }
+
+            val wrapperInitBlock = CodeBlock.builder()
+            wrapperInitBlock.addStatement("io.mvikit.core.MviViewModelRegistry.register(viewModel, this)")
+
+            for (handler in handlers) {
+                val methodName = handler.simpleName.asString()
+                val subclassName = methodName.replaceFirstChar { it.uppercase() }
+                val subclassFq = ClassName(packageName, "${prefix}Intent", subclassName)
+
+                val params = handler.parameters
+                if (params.isEmpty()) {
+                    wrapperInitBlock.addStatement("registerIntent(%T::class) { viewModel.%N() }", subclassFq, methodName)
+                } else {
+                    val paramAccess = params.joinToString(", ") { "intent.${it.name!!.asString()}" }
+                    wrapperInitBlock.addStatement("registerIntent(%T::class) { intent -> viewModel.%N(%L) }", subclassFq, methodName, paramAccess)
+                }
+            }
+
+            wrapperClassSpecBuilder.addInitializerBlock(wrapperInitBlock.build())
+
+            // Add updateStateInternal
+            wrapperClassSpecBuilder.addFunction(
+                FunSpec.builder("updateStateInternal")
+                    .addParameter("block", LambdaTypeName.get(builderClassName, emptyList(), UNIT))
+                    .addCode(
+                        CodeBlock.builder()
+                            .addStatement("reduce {")
+                            .addStatement("    val builder = %T(this)", builderClassName)
+                            .addStatement("    builder.block()")
+                            .addStatement("    builder.build()")
+                            .addStatement("}")
+                            .build()
+                    )
+                    .build()
+            )
+
+            FileSpec.builder(packageName, "${prefix}ViewModel_GeneratedWrapper")
+                .addType(wrapperClassSpecBuilder.build())
+                .build()
+                .writeTo(codeGenerator, dependencies)
+
+            // --- 2.6 Generate Extensions File ---
+            val fileSpecBuilder = FileSpec.builder(packageName, "${prefix}ViewModel_Extensions")
+                .addImport("androidx.compose.runtime", "collectAsState")
+
+            // val LoginViewModel.state: LoginState
+            fileSpecBuilder.addProperty(
+                PropertySpec.builder("state", stateClassName)
+                    .receiver(vmClassName)
+                    .getter(
+                        FunSpec.getterBuilder()
+                            .addStatement("return (io.mvikit.core.MviViewModelRegistry.getWrapper(this) as %T).state.value", wrapperClassName)
+                            .build()
+                    )
+                    .build()
+            )
+
+            // fun LoginViewModel.updateState(...)
+            fileSpecBuilder.addFunction(
+                FunSpec.builder("updateState")
+                    .receiver(vmClassName)
+                    .addParameter("block", LambdaTypeName.get(builderClassName, emptyList(), UNIT))
+                    .addStatement("val wrapper = io.mvikit.core.MviViewModelRegistry.getWrapper(this) as %T", wrapperClassName)
+                    .addStatement("wrapper.updateStateInternal(block)")
+                    .build()
+            )
+
+            // fun <T> LoginViewModel.execute(...)
+            val executeMethod = FunSpec.builder("execute")
+                .receiver(vmClassName)
+                .addTypeVariable(TypeVariableName("T"))
+                .addParameter(
+                    ParameterSpec.builder("key", STRING)
+                        .defaultValue("java.util.UUID.randomUUID().toString()")
+                        .build()
+                )
+                .addParameter(
+                    ParameterSpec.builder("policy", ClassName("io.mvikit.core.action", "DuplicateActionPolicy"))
+                        .defaultValue("io.mvikit.core.action.DuplicateActionPolicy.ALLOW")
+                        .build()
+                )
+                .addParameter(
+                    ParameterSpec.builder("retries", INT)
+                        .defaultValue("0")
+                        .build()
+                )
+                .addParameter(
+                    ParameterSpec.builder("retryDelayMillis", LONG)
+                        .defaultValue("0L")
+                        .build()
+                )
+                .addParameter(
+                    ParameterSpec.builder("exponentialBackoff", BOOLEAN)
+                        .defaultValue("false")
+                        .build()
+                )
+                .addParameter(
+                    ParameterSpec.builder("loadingKey", STRING.copy(nullable = true))
+                        .defaultValue("null")
+                        .build()
+                )
+                .addParameter(
+                    ParameterSpec.builder("request", LambdaTypeName.get(receiver = null, returnType = TypeVariableName("T")).copy(suspending = true))
+                        .build()
+                )
+                .returns(ClassName("io.mvikit.core.action", "ActionBuilder").parameterizedBy(TypeVariableName("T")))
+                .addCode(
+                    CodeBlock.builder()
+                        .addStatement("val wrapper = io.mvikit.core.MviViewModelRegistry.getWrapper(this)")
+                        .addStatement("return io.mvikit.core.action.ActionBuilder(wrapper, key, policy, retries, retryDelayMillis, exponentialBackoff, loadingKey, request)")
+                        .build()
+                )
+                .build()
+            fileSpecBuilder.addFunction(executeMethod)
+
+            // Composable collectState()
+            fileSpecBuilder.addFunction(
+                FunSpec.builder("collectState")
+                    .receiver(vmClassName)
+                    .addAnnotation(ClassName("androidx.compose.runtime", "Composable"))
+                    .returns(ClassName("androidx.compose.runtime", "State").parameterizedBy(stateClassName))
+                    .addStatement("val wrapper = io.mvikit.core.MviViewModelRegistry.getWrapper(this) as %T", wrapperClassName)
+                    .addStatement("return wrapper.state.collectAsState()")
+                    .build()
+            )
+
+            // Composable collectEffects()
+            fileSpecBuilder.addFunction(
+                FunSpec.builder("collectEffects")
+                    .receiver(vmClassName)
+                    .addAnnotation(ClassName("androidx.compose.runtime", "Composable"))
+                    .addParameter("handler", LambdaTypeName.get(receiver = null, ANY, returnType = UNIT).copy(suspending = true))
+                    .addStatement("val wrapper = io.mvikit.core.MviViewModelRegistry.getWrapper(this)")
+                    .addStatement("io.mvikit.compose.CollectEffects(wrapper.effects, handler)")
+                    .build()
+            )
+
+            // Composable rememberLoginViewModel()
+            fileSpecBuilder.addFunction(
+                FunSpec.builder("remember${prefix}ViewModel")
+                    .addAnnotation(ClassName("androidx.compose.runtime", "Composable"))
+                    .addParameter(
+                        ParameterSpec.builder("factory", LambdaTypeName.get(receiver = null, returnType = vmClassName)).apply {
+                            if (hasNoArgConstructor) {
+                                defaultValue("{ %T() }", vmClassName)
+                            }
+                        }.build()
+                    )
+                    .returns(vmClassName)
+                    .addCode(
+                        CodeBlock.builder()
+                            .addStatement("val wrapper = androidx.lifecycle.viewmodel.compose.viewModel<%T>(", wrapperClassName)
+                            .addStatement("    initializer = {")
+                            .addStatement("        %T(factory())", wrapperClassName)
+                            .addStatement("    }")
+                            .addStatement(")")
+                            .addStatement("return wrapper.viewModel")
+                            .build()
+                    )
+                    .build()
+            )
+
+            // If form exists, generate the validate() extension function
+            if (formSymbol != null) {
+                val formClassName = ClassName(packageName, formSymbol.simpleName.asString())
+                val validateFuncBuilder = FunSpec.builder("validate")
+                    .receiver(vmClassName)
+                    .returns(BOOLEAN)
+
+                val formArgs = formSymbol.getDeclaredProperties().map { prop ->
+                    val name = prop.simpleName.asString()
+                    "$name = current.$name"
+                }.joinToString(", ")
+
+                validateFuncBuilder.addCode(
+                    CodeBlock.builder()
+                        .addStatement("val wrapper = io.mvikit.core.MviViewModelRegistry.getWrapper(this) as %T", wrapperClassName)
+                        .addStatement("val current = this.state")
+                        .addStatement("val form = %T(%L)", formClassName, formArgs)
+                        .addStatement("val result = wrapper.validator.validate(form)")
+                        .addStatement("this.updateState {")
+                        .addStatement("    validationErrors = result.errors")
+                        .addStatement("}")
+                        .addStatement("return result.isValid")
+                        .build()
+                )
+                fileSpecBuilder.addFunction(validateFuncBuilder.build())
+            }
+
+            // Generate @MviAction wrappers
+            for (action in actions) {
+                val actionName = action.simpleName.asString()
+                val wrapperName = if (actionName.startsWith("perform")) {
+                    actionName.removePrefix("perform").replaceFirstChar { it.lowercase() }
+                } else {
+                    "${actionName}Async"
+                }
+
+                val actionWrapperBuilder = FunSpec.builder(wrapperName)
+                    .receiver(vmClassName)
+
+                val params = action.parameters
+                val callArgs = params.joinToString(", ") { p -> p.name!!.asString() }
+
+                for (p in params) {
+                    actionWrapperBuilder.addParameter(p.name!!.asString(), p.type.toTypeName())
+                }
+
+                actionWrapperBuilder.addCode(
+                    CodeBlock.builder()
+                        .addStatement("val wrapper = io.mvikit.core.MviViewModelRegistry.getWrapper(this)")
+                        .addStatement("wrapper.viewModelScope.launch {")
+                        .addStatement("    this@%N.%N(%L)", wrapperName, actionName, callArgs)
+                        .addStatement("}")
+                        .build()
+                )
+
+                fileSpecBuilder.addImport("androidx.lifecycle", "viewModelScope")
+                fileSpecBuilder.addImport("kotlinx.coroutines", "launch")
+                fileSpecBuilder.addFunction(actionWrapperBuilder.build())
+            }
+
+            fileSpecBuilder.build().writeTo(codeGenerator, dependencies)
+        }
+    }
+
+    // --- 3. Screen Generator ---
     private fun processMviScreen(resolver: Resolver) {
         val symbols = resolver.getSymbolsWithAnnotation("io.mvikit.annotations.MviScreen").toList()
         for (symbol in symbols) {
@@ -157,46 +670,7 @@ class MviSymbolProcessor(
             val name = annotation.arguments.first { it.name?.asString() == "name" }.value.toString()
             val packageName = symbol.packageName.asString()
 
-            // 1. Generate State if not present
-            val stateName = "${name}State"
-            if (resolver.getClassDeclarationByName(resolver.getKSNameFromString("$packageName.$stateName")) == null) {
-                val file = createNewFileSafe(Dependencies(false, symbol.containingFile!!), packageName, stateName)
-                if (file != null) {
-                    PrintWriter(OutputStreamWriter(file, "UTF-8")).use { out ->
-                        out.println("package $packageName")
-                        out.println()
-                        out.println("data class $stateName(val unused: Boolean = false)")
-                    }
-                }
-            }
-
-            // 2. Generate Intent if not present
-            val intentName = "${name}Intent"
-            if (resolver.getClassDeclarationByName(resolver.getKSNameFromString("$packageName.$intentName")) == null) {
-                val file = createNewFileSafe(Dependencies(false, symbol.containingFile!!), packageName, intentName)
-                if (file != null) {
-                    PrintWriter(OutputStreamWriter(file, "UTF-8")).use { out ->
-                        out.println("package $packageName")
-                        out.println()
-                        out.println("sealed interface $intentName : io.mvikit.core.intent.Intent")
-                    }
-                }
-            }
-
-            // 3. Generate Effect if not present
-            val effectName = "${name}Effect"
-            if (resolver.getClassDeclarationByName(resolver.getKSNameFromString("$packageName.$effectName")) == null) {
-                val file = createNewFileSafe(Dependencies(false, symbol.containingFile!!), packageName, effectName)
-                if (file != null) {
-                    PrintWriter(OutputStreamWriter(file, "UTF-8")).use { out ->
-                        out.println("package $packageName")
-                        out.println()
-                        out.println("sealed interface $effectName")
-                    }
-                }
-            }
-
-            // 4. Generate Contract if not present
+            // Generate Contract if not present
             val contractName = "${name}Contract"
             if (resolver.getClassDeclarationByName(resolver.getKSNameFromString("$packageName.$contractName")) == null) {
                 val file = createNewFileSafe(Dependencies(false, symbol.containingFile!!), packageName, contractName)
@@ -211,304 +685,7 @@ class MviSymbolProcessor(
         }
     }
 
-    // --- 3. Form Generator ---
-    private fun processForms(resolver: Resolver) {
-        val formAnnotations = listOf(
-            "io.mvikit.annotations.Required",
-            "io.mvikit.annotations.Email",
-            "io.mvikit.annotations.Password",
-            "io.mvikit.annotations.MinLength",
-            "io.mvikit.annotations.MaxLength",
-            "io.mvikit.annotations.Regex",
-            "io.mvikit.annotations.MatchField"
-        )
-
-        // Find all properties having any of these annotations
-        val annotatedClasses = mutableSetOf<KSClassDeclaration>()
-        for (ann in formAnnotations) {
-            val symbols = resolver.getSymbolsWithAnnotation(ann).toList()
-            for (symbol in symbols) {
-                if (symbol is KSPropertyDeclaration) {
-                    val parent = symbol.parentDeclaration
-                    if (parent is KSClassDeclaration) {
-                        annotatedClasses.add(parent)
-                    }
-                }
-            }
-        }
-
-        // Generate schemas
-        val schemas = mutableListOf<String>()
-
-        for (clazz in annotatedClasses) {
-            val packageName = clazz.packageName.asString()
-            val className = clazz.simpleName.asString()
-            val validatorName = "${className}Validator"
-
-            val properties = clazz.getDeclaredProperties().toList()
-
-            // Validate @MatchField reference matching
-            for (prop in properties) {
-                val matchFieldAnn = prop.annotations.firstOrNull { it.shortName.asString() == "MatchField" }
-                if (matchFieldAnn != null) {
-                    val targetField = matchFieldAnn.arguments.first { it.name?.asString() == "fieldName" }.value.toString()
-                    val targetProp = properties.firstOrNull { it.simpleName.asString() == targetField }
-                    if (targetProp == null) {
-                        logger.error("MatchField references unknown field '$targetField'", prop)
-                    }
-                }
-            }
-
-            val file = createNewFileSafe(Dependencies(false, clazz.containingFile!!), packageName, validatorName) ?: continue
-            PrintWriter(OutputStreamWriter(file, "UTF-8")).use { out ->
-                out.println("package $packageName")
-                out.println()
-                out.println("import io.mvikit.form.form")
-                out.println("import io.mvikit.form.Form")
-                out.println("import io.mvikit.form.ValidationMode")
-                out.println("import io.mvikit.form.ValidationResult")
-                out.println("import io.mvikit.form.BoundField")
-                out.println("import io.mvikit.form.required")
-                out.println("import io.mvikit.form.match")
-                out.println("import io.mvikit.form.email")
-                out.println("import io.mvikit.form.minLength")
-                out.println("import io.mvikit.form.maxLength")
-                out.println("import io.mvikit.form.regex")
-                out.println("import io.mvikit.form.password")
-                out.println()
-                out.println("class $validatorName(")
-                out.println("    validationMode: io.mvikit.form.ValidationMode = io.mvikit.form.ValidationMode.ON_CHANGE")
-                out.println(") {")
-                out.println("    private lateinit var formInstance: io.mvikit.form.Form")
-                out.println()
-                out.println("    init {")
-                out.println("        formInstance = io.mvikit.form.form(validationMode) {")
-
-                for (prop in properties) {
-                    val propName = prop.simpleName.asString()
-                    val propType = getTypeName(prop.type)
-                    val isString = propType == "String"
-
-                    if (isString) {
-                        out.println("            field(\"$propName\") {")
-                    } else {
-                        val defVal = getDefaultValue(prop.type)
-                        out.println("            field(\"$propName\", $defVal) {")
-                    }
-
-                    // Write validation rules
-                    for (ann in prop.annotations.toList()) {
-                        val name = ann.shortName.asString()
-                        val args = ann.arguments.associateBy { it.name?.asString() }
-                        when (name) {
-                            "Required" -> {
-                                val msg = args["message"]?.value ?: "Field is required"
-                                out.println("                required(\"$msg\")")
-                            }
-                            "Email" -> {
-                                val msg = args["message"]?.value ?: "Invalid email format"
-                                out.println("                email(\"$msg\")")
-                            }
-                            "Password" -> {
-                                val min = args["minLength"]?.value ?: 8
-                                val upper = args["requireUppercase"]?.value ?: false
-                                val lower = args["requireLowercase"]?.value ?: false
-                                val spec = args["requireSpecialCharacter"]?.value ?: false
-                                val digit = args["requireDigit"]?.value ?: false
-                                val msg = args["message"]?.value ?: "Password does not meet validation criteria"
-                                out.println("                password(minLength = $min, requireUppercase = $upper, requireLowercase = $lower, requireSpecialCharacter = $spec, requireDigit = $digit, message = \"$msg\")")
-                            }
-                            "MinLength" -> {
-                                val len = args["length"]?.value ?: 0
-                                val msg = args["message"]?.value ?: "Minimum length is $len"
-                                out.println("                minLength($len, \"$msg\")")
-                            }
-                            "MaxLength" -> {
-                                val len = args["length"]?.value ?: 0
-                                val msg = args["message"]?.value ?: "Maximum length is $len"
-                                out.println("                maxLength($len, \"$msg\")")
-                            }
-                            "Regex" -> {
-                                val pat = args["pattern"]?.value ?: ""
-                                val msg = args["message"]?.value ?: "Format is invalid"
-                                out.println("                regex(\"$pat\", \"$msg\")")
-                            }
-                            "MatchField" -> {
-                                val ref = args["fieldName"]?.value ?: ""
-                                val msg = args["message"]?.value ?: "Fields do not match"
-                                val fallback = if (isString) "\"\"" else getDefaultValue(prop.type)
-                                out.println("                match({ if (::formInstance.isInitialized) formInstance.get<$propType>(\"$ref\").value else $fallback }, \"$msg\")")
-                            }
-                        }
-                    }
-                    out.println("            }")
-                }
-                out.println("        }")
-                out.println("    }")
-                out.println()
-                out.println("    val form: io.mvikit.form.Form get() = formInstance")
-                out.println()
-                out.println("    fun validate(data: $packageName.$className): io.mvikit.form.ValidationResult {")
-                for (prop in properties) {
-                    val name = prop.simpleName.asString()
-                    val type = getTypeName(prop.type)
-                    out.println("        formInstance.get<$type>(\"$name\").updateValue(data.$name)")
-                }
-                out.println("        return formInstance.validate()")
-                out.println("    }")
-                out.println()
-                out.println("    val isValid: Boolean get() = form.isValid")
-                out.println("    val validationErrors: Map<String, String> get() = form.fields.value.mapNotNull { entry -> entry.value.error?.let { err -> entry.key to err } }.toMap()")
-                out.println("}")
-            }
-
-            // Schema documentation line
-            val fieldsSchema = properties.joinToString(", ") { prop ->
-                "${prop.simpleName.asString()}: ${getTypeName(prop.type)}"
-            }
-            schemas.add("- **$className**: `$fieldsSchema`")
-        }
-
-        if (schemas.isNotEmpty()) {
-            writeDocFile("form_schema.md", "# Form Schema Documentation\n\n" + schemas.joinToString("\n"))
-        }
-    }
-
-    // --- 4. Intent & Reducer Generator (@MviViewModel) ---
-    private fun processViewModels(resolver: Resolver) {
-        val vmSymbols = resolver.getSymbolsWithAnnotation("io.mvikit.annotations.MviViewModel").toList()
-        val features = mutableListOf<String>()
-
-        for (symbol in vmSymbols) {
-            if (symbol !is KSClassDeclaration) continue
-            val packageName = symbol.packageName.asString()
-            val className = symbol.simpleName.asString()
-
-            // Find intent handlers and reducers
-            val functions = symbol.getDeclaredFunctions().toList()
-            val handlers = functions.filter { fn ->
-                fn.annotations.any { it.shortName.asString() == "IntentHandler" || it.shortName.asString() == "Reducer" }
-            }
-
-            val actions = functions.filter { fn ->
-                fn.annotations.any { it.shortName.asString() == "MviAction" }
-            }
-
-            val generatedName = "${className}_Generated"
-            val file = createNewFileSafe(Dependencies(false, symbol.containingFile!!), packageName, generatedName) ?: continue
-
-            val uniqueIntents = mutableSetOf<String>()
-
-            PrintWriter(OutputStreamWriter(file, "UTF-8")).use { out ->
-                out.println("package $packageName")
-                out.println()
-                out.println("import io.mvikit.core.intent.Intent")
-                out.println()
-
-                // Write registerGeneratedIntents extension
-                out.println("fun $packageName.$className.registerGeneratedIntents() {")
-
-                for (fn in handlers) {
-                    if (fn.parameters.size != 1) {
-                        logger.error("IntentHandler/Reducer function must have exactly one parameter", fn)
-                        continue
-                    }
-                    val param = fn.parameters[0]
-                    val intentType = getTypeName(param.type)
-
-                    if (uniqueIntents.contains(intentType)) {
-                        logger.error("Duplicate intent registration for $intentType", fn)
-                    }
-                    uniqueIntents.add(intentType)
-
-                    val isReducer = fn.annotations.any { it.shortName.asString() == "Reducer" }
-                    val fnName = fn.simpleName.asString()
-
-                    out.println("    registerIntent($intentType::class) { intent ->")
-                    if (isReducer) {
-                        // reducer: checks if the function takes state receiver or ViewModel returns state
-                        val returnsState = fn.returnType?.resolve()?.declaration?.simpleName?.asString() ?: "Unit"
-                        if (returnsState == "Unit") {
-                            logger.error("Reducer function must return a state object", fn)
-                        }
-                        out.println("        reduce {")
-                        out.println("            this@registerGeneratedIntents.$fnName(intent)")
-                        out.println("        }")
-                    } else {
-                        // handler: normal method call
-                        out.println("        this@registerGeneratedIntents.$fnName(intent)")
-                    }
-                    out.println("    }")
-                }
-                out.println("}")
-                out.println()
-
-                // Generate @MviAction execute wrappers
-                for (action in actions) {
-                    val annotation = action.annotations.first { it.shortName.asString() == "MviAction" }
-                    val args = annotation.arguments.associateBy { it.name?.asString() }
-
-                    val actionFnName = action.simpleName.asString()
-                    val keyVal = args["key"]?.value?.toString()?.takeIf { it.isNotBlank() } ?: actionFnName
-                    val policyVal = args["policy"]?.value?.toString() ?: "ALLOW"
-                    val retriesVal = args["retries"]?.value ?: 0
-                    val delayVal = args["retryDelayMillis"]?.value ?: 0L
-                    val backoffVal = args["exponentialBackoff"]?.value ?: false
-                    val loadingKeyVal = args["loadingKey"]?.value?.toString()?.takeIf { it.isNotBlank() }
-
-                    val policyEnum = "io.mvikit.core.action.DuplicateActionPolicy.$policyVal"
-
-                    // Extract action input params and return type
-                    val inputs = action.parameters.joinToString(", ") { p ->
-                        "${p.name!!.asString()}: ${getTypeName(p.type)}"
-                    }
-                    val callArgs = action.parameters.joinToString(", ") { p -> p.name!!.asString() }
-
-                    val returnType = action.returnType?.let { getTypeName(it) } ?: "Unit"
-
-                    val wrapperName = if (actionFnName.startsWith("perform")) {
-                        actionFnName.removePrefix("perform").replaceFirstChar { it.lowercase() }
-                    } else {
-                        "${actionFnName}Async"
-                    }
-
-                    val wrapperInputs = if (inputs.isEmpty()) "" else "$inputs, "
-
-                    out.println("fun $packageName.$className.$wrapperName(")
-                    out.println("    ${wrapperInputs}onSuccess: suspend ($returnType) -> Unit,")
-                    out.println("    onFailure: (suspend (Throwable) -> Unit)? = null,")
-                    out.println("    onFinally: (suspend () -> Unit)? = null")
-                    out.println(") {")
-                    out.println("    execute(")
-                    out.println("        key = \"$keyVal\",")
-                    out.println("        request = { this@$wrapperName.$actionFnName($callArgs) },")
-                    out.println("        onSuccess = onSuccess,")
-                    out.println("        onFailure = onFailure,")
-                    out.println("        onFinally = onFinally,")
-                    out.println("        policy = $policyEnum,")
-                    out.println("        retries = $retriesVal,")
-                    out.println("        retryDelayMillis = ${delayVal}L,")
-                    out.println("        exponentialBackoff = $backoffVal,")
-                    if (loadingKeyVal != null) {
-                        out.println("        loadingKey = \"$loadingKeyVal\"")
-                    } else {
-                        out.println("        loadingKey = null")
-                    }
-                    out.println("    )")
-                    out.println("}")
-                    out.println()
-                }
-            }
-
-            features.add("- **$className**: registers intents `${uniqueIntents.joinToString()}`")
-        }
-
-        if (features.isNotEmpty()) {
-            writeDocFile("feature_graph.md", "# Feature Graph Documentation\n\n" + features.joinToString("\n"))
-        }
-    }
-
-    // --- 5. Navigation Generator (@Destination, @DeepLink, @ComposableScreen) ---
+    // --- 4. Navigation Generator ---
     private fun processNavigation(resolver: Resolver) {
         val destSymbols = resolver.getSymbolsWithAnnotation("io.mvikit.annotations.Destination").toList()
         val dlSymbols = resolver.getSymbolsWithAnnotation("io.mvikit.annotations.DeepLink").toList()
@@ -521,7 +698,7 @@ class MviSymbolProcessor(
             return allScreens.getOrPut(fqName) {
                 val isObject = symbol.classKind == ClassKind.OBJECT
                 val params = symbol.primaryConstructor?.parameters?.map { p ->
-                    ScreenParam(p.name!!.asString(), getTypeName(p.type))
+                    ScreenParam(p.name!!.asString(), p.type.toTypeName().toString())
                 } ?: emptyList()
                 ScreenMeta(
                     simpleName = symbol.simpleName.asString(),
@@ -557,27 +734,6 @@ class MviSymbolProcessor(
 
         if (allScreens.isEmpty()) return
 
-        // Validate duplicates and deep link placeholders
-        val checkedDestinations = mutableSetOf<String>()
-
-        for (meta in allScreens.values) {
-            if (checkedDestinations.contains(meta.simpleName)) {
-                logger.error("Duplicate Destination found for simple name: ${meta.simpleName}", meta.symbol)
-            }
-            checkedDestinations.add(meta.simpleName)
-
-            val route = meta.deepLinkRoute
-            if (route != null) {
-                val pathParams = Regex("\\{([^}]+)\\}").findAll(route).map { it.groupValues[1] }.toList()
-                for (param in pathParams) {
-                    val hasProp = meta.params.any { it.name == param }
-                    if (!hasProp) {
-                        logger.error("DeepLink path parameter '{$param}' does not match any property in the screen ${meta.simpleName}", meta.symbol)
-                    }
-                }
-            }
-        }
-
         // Generate Navigation Registry
         val file = createNewFileSafe(Dependencies(false), "io.mvikit.generated.navigation", "GeneratedNavigationRegistry") ?: return
         PrintWriter(OutputStreamWriter(file, "UTF-8")).use { out ->
@@ -603,7 +759,7 @@ class MviSymbolProcessor(
                             "Boolean" -> "?.toBooleanStrictOrNull()"
                             "Float" -> "?.toFloatOrNull()"
                             "Double" -> "?.toDoubleOrNull()"
-                            else -> "" // Already String
+                            else -> ""
                         }
                         val assertion = if (p.type.endsWith("?")) "" else " ?: throw IllegalArgumentException(\"Missing parameter ${p.name}\")"
                         "${p.name} = params[\"${p.name}\"]$cast$assertion"
@@ -632,27 +788,10 @@ class MviSymbolProcessor(
             }
             out.println("}")
         }
-
-        // Generate Navigation Graph doc
-        val graphLines = mutableListOf<String>()
-        for (meta in allScreens.values) {
-            val dl = meta.deepLinkRoute?.let { " [DeepLink: `$it`]" } ?: ""
-            val view = meta.viewName?.let { " -> Rendered by: `$it`" } ?: ""
-            graphLines.add("- **${meta.simpleName}** (${meta.fqName})$dl$view")
-        }
-        writeDocFile("navigation_graph.md", "# Navigation Graph Documentation\n\n" + graphLines.joinToString("\n"))
     }
 
-    private fun writeDocFile(fileName: String, content: String) {
-        try {
-            val docDir = File("build/mvikit")
-            if (!docDir.exists()) {
-                docDir.mkdirs()
-            }
-            File(docDir, fileName).writeText(content)
-        } catch (e: Exception) {
-            // Ignore doc writing failures during compilation if directories are locked
-        }
+    private fun getTypeNameString(typeRef: KSTypeReference): String {
+        return typeRef.resolve().declaration.qualifiedName?.asString() ?: typeRef.toString()
     }
 
     private data class ScreenParam(val name: String, val type: String)

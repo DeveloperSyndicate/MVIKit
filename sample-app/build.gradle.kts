@@ -39,7 +39,6 @@ dependencies {
     implementation(project(":mvikit-compose"))
     implementation(project(":mvikit-form"))
     implementation(project(":mvikit-navigation"))
-    implementation(project(":mvikit-annotations"))
     ksp(project(":mvikit-ksp"))
 
     implementation(libs.androidx.lifecycle.viewmodel.compose)

@@ -38,7 +38,7 @@ class MviIntentTest {
     private data class TestState(val counter: Int = 0)
 
     // A mock ViewModel for testing intents
-    private class TestIntentViewModel : MviViewModel<TestState, Unit>(TestState()) {
+    private class TestIntentViewModel : ViewModel<TestState, Unit>(TestState()) {
         var lastError: Throwable? = null
         var actionOneExecuted = false
         var actionThreeValue = ""

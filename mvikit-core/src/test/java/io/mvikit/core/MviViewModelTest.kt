@@ -19,7 +19,7 @@ import org.junit.Before
 import org.junit.Test
 
 /**
- * Unit tests verifying the behavior of [MviViewModel] in the core module.
+ * Unit tests verifying the behavior of [ViewModel] in the core module.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class MviViewModelTest {
@@ -38,10 +38,10 @@ class MviViewModelTest {
         data class Toast(val message: String) : TestEffect
     }
 
-    // Concrete implementation of MviViewModel for unit testing
+    // Concrete implementation of ViewModel for unit testing
     private class TestViewModel(
         initialState: TestState = TestState()
-    ) : MviViewModel<TestState, TestEffect>(initialState) {
+    ) : ViewModel<TestState, TestEffect>(initialState) {
 
         var lastError: Throwable? = null
 

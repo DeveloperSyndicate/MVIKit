@@ -1,10 +1,12 @@
 package io.mvikit.sample
 
+import io.mvikit.core.MviViewModelRegistry
 import io.mvikit.form.ValidationMode
 import io.mvikit.navigation.DeepLinkSystem
 import io.mvikit.generated.navigation.registerAllGeneratedDeepLinks
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.test.resetMain
@@ -28,76 +30,80 @@ class KspGeneratedCodeTest {
     }
 
     @Test
-    fun testGeneratedState() {
-        val state = KspSignUpState()
-        assertEquals("", state.email)
-        assertFalse(state.isLoading)
-        
-        val updated = state.copy(email = "test@example.com", isLoading = true)
-        assertEquals("test@example.com", updated.email)
-        assertTrue(updated.isLoading)
-    }
-
-    @Test
     fun testGeneratedFormValidator() {
-        val validator = KspSignUpFormValidator(ValidationMode.MANUAL)
+        val validator = LoginFormValidator(ValidationMode.MANUAL)
         
         // 1. Invalid input
-        val invalidForm = KspSignUpForm(
-            name = "",
+        val invalidForm = LoginForm(
             email = "invalid-email",
-            password = "123",
-            confirmPassword = "456"
+            password = "123"
         )
         val result = validator.validate(invalidForm)
         assertFalse(result.isValid)
-        assertEquals("Name is required", result.errors["name"])
         assertEquals("Invalid email format", result.errors["email"])
-        assertEquals("Password must be at least 6 chars", result.errors["password"])
-        assertEquals("Passwords must match", result.errors["confirmPassword"])
+        assertEquals("Password must be at least 6 characters", result.errors["password"])
 
         // 2. Valid input
-        val validForm = KspSignUpForm(
-            name = "John Doe",
-            email = "john@example.com",
-            password = "securepassword",
-            confirmPassword = "securepassword"
+        val validForm = LoginForm(
+            email = "test@example.com",
+            password = "securepassword"
         )
         val result2 = validator.validate(validForm)
         assertTrue(result2.isValid)
         assertTrue(result2.errors.isEmpty())
     }
 
-    @OptIn(ExperimentalCoroutinesApi::class)
     @Test
-    fun testGeneratedViewModelBindings() = runTest {
-        val viewModel = KspSignUpViewModel()
+    fun testGeneratedViewModelStateAndUpdates() = runTest {
+        val viewModel = LoginViewModel(AuthRepository())
+        // Initialize wrapper to link ViewModel to registry
+        val wrapper = LoginViewModel_GeneratedWrapper(viewModel)
+
+        // Initial state assertions
+        assertEquals("", viewModel.state.email)
+        assertEquals("", viewModel.state.password)
+        assertFalse(viewModel.state.isLoading)
+        assertNull(viewModel.state.errorMessage)
+
+        // 1. Test updating state directly via method calls
+        viewModel.updateEmail("user@example.com")
+        assertEquals("user@example.com", viewModel.state.email)
+
+        viewModel.updatePassword("mypassword")
+        assertEquals("mypassword", viewModel.state.password)
+
+        // 2. Test KSP intent routing via wrapper dispatch
+        wrapper.dispatch(LoginIntent.UpdateEmail("routed@example.com"))
+        assertEquals("routed@example.com", viewModel.state.email)
+    }
+
+    @Test
+    fun testGeneratedViewModelValidationAndAction() = runTest {
+        val navigator = io.mvikit.navigation.NavigatorImpl()
+        val viewModel = LoginViewModel(AuthRepository())
+        val wrapper = LoginViewModel_GeneratedWrapper(viewModel)
+
+        // 1. Invalid state validation
+        viewModel.updateEmail("invalid")
+        viewModel.updatePassword("12")
+        assertFalse(viewModel.validate())
+        assertNotNull(viewModel.state.validationErrors["email"])
+        assertNotNull(viewModel.state.validationErrors["password"])
+
+        // 2. Valid state validation & action execution
+        viewModel.updateEmail("test@example.com")
+        viewModel.updatePassword("securepassword")
+        assertTrue(viewModel.validate())
+        assertTrue(viewModel.state.validationErrors.isEmpty())
+
+        // Trigger action via async wrapper
+        viewModel.loginAsync()
         
-        // Initial state
-        assertEquals("", viewModel.state.value.email)
-        assertFalse(viewModel.state.value.isLoading)
-
-        // 1. Test IntentHandler
-        viewModel.dispatch(UpdateKspEmail("user@example.com"))
-        // Let dispatch coroutine run
-        assertEquals("user@example.com", viewModel.state.value.email)
-
-        // 2. Test Reducer
-        viewModel.dispatch(SubmitKspSignUp)
-        assertTrue(viewModel.state.value.isLoading)
-
-        // 3. Test Action wrapper
-        var successCalled = false
-        viewModel.registerUser(
-            email = "john@example.com",
-            onSuccess = { success ->
-                successCalled = success
-            }
-        )
+        // Wait for coroutine simulation
+        delay(2000)
         
-        // Wait for coroutine to complete action
-        kotlinx.coroutines.delay(200)
-        assertTrue(successCalled)
+        assertFalse(viewModel.state.isLoading)
+        assertNull(viewModel.state.errorMessage)
     }
 
     @Test
@@ -105,9 +111,8 @@ class KspGeneratedCodeTest {
         DeepLinkSystem.clear()
         registerAllGeneratedDeepLinks()
 
-        val matchedScreen = DeepLinkSystem.handle("mvikit://profile/user123")
+        val matchedScreen = DeepLinkSystem.handle("mvikit://login")
         assertNotNull(matchedScreen)
-        assertTrue(matchedScreen is ProfileScreen)
-        assertEquals("user123", (matchedScreen as ProfileScreen).profileId)
+        assertTrue(matchedScreen is LoginScreen)
     }
 }

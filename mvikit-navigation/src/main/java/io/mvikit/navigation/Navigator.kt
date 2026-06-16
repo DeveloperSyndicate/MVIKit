@@ -107,3 +107,12 @@ interface Navigator {
      */
     suspend fun requestPermissions(vararg permissions: String): Map<String, Boolean>
 }
+
+object NavigatorRegistry {
+    @Volatile
+    var instance: Navigator? = null
+}
+
+val Any.navigator: Navigator
+    get() = NavigatorRegistry.instance ?: throw IllegalStateException("Navigator not registered in NavigatorRegistry.")
+

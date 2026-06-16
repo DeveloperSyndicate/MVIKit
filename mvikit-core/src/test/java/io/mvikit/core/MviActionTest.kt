@@ -37,7 +37,7 @@ class MviActionTest {
         val isLoaded: Boolean = false
     )
 
-    private class TestActionViewModel : MviViewModel<TestState, Unit>(TestState()) {
+    private class TestActionViewModel : ViewModel<TestState, Unit>(TestState()) {
         var lastError: Throwable? = null
         var lastSuccessValue: String? = null
         var finallyCallbackCalled = false

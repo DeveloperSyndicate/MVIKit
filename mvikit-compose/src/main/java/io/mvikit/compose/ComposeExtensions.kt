@@ -8,7 +8,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
-import io.mvikit.core.MviViewModel
+import io.mvikit.core.ViewModel
 import io.mvikit.core.intent.Intent
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
@@ -88,7 +88,7 @@ fun <EFFECT> CollectEffects(
  *
  * @param intent The user intent to dispatch.
  */
-fun MviViewModel<*, *>.dispatchIntent(intent: Intent) {
+fun ViewModel<*, *>.dispatchIntent(intent: Intent) {
     this.dispatch(intent)
 }
 
@@ -102,7 +102,7 @@ fun MviViewModel<*, *>.dispatchIntent(intent: Intent) {
  * @return True if the action is currently running, false otherwise.
  */
 @Composable
-fun MviViewModel<*, *>.rememberActionState(key: String): Boolean {
+fun ViewModel<*, *>.rememberActionState(key: String): Boolean {
     val state by collectState(this.actionState)
     return state.runningActions.contains(key)
 }

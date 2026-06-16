@@ -15,6 +15,10 @@ import kotlinx.coroutines.flow.update
  */
 class NavigatorImpl : Navigator {
 
+    init {
+        NavigatorRegistry.instance = this
+    }
+
     private val _backStack = MutableStateFlow<List<Screen>>(emptyList())
     override val backStack: StateFlow<List<Screen>> = _backStack.asStateFlow()
 
