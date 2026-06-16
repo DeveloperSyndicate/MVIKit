@@ -27,6 +27,10 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlin.coroutines.Continuation
+import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.intrinsics.startCoroutineUninterceptedOrReturn
+import kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED
 
 /**
  * A lightweight, production-ready ViewModel that implements the Model-View-Intent (MVI) architecture.
@@ -70,6 +74,16 @@ abstract class ViewModel<STATE : Any, EFFECT : Any>(
 
     private val runningJobs = ConcurrentHashMap<String, Job>()
 
+    private val exceptionHandler = CoroutineExceptionHandler { _, throwable ->
+        onError(throwable)
+    }
+
+    private val dispatchContext by lazy {
+        viewModelScope.coroutineContext + Dispatchers.Main.immediate + exceptionHandler
+    }
+
+
+
     /**
      * Registers a handler for a specific subtype [I] of [Intent].
      */
@@ -101,7 +115,7 @@ abstract class ViewModel<STATE : Any, EFFECT : Any>(
      * Dispatches the given [intent] to this ViewModel.
      */
     fun dispatch(intent: Intent) {
-        launchIntent {
+        val block: suspend () -> Unit = {
             MviKitDiagnostics.notifyIntentReceived(intent)
             try {
                 executeChain(intent, 0)
@@ -110,6 +124,25 @@ abstract class ViewModel<STATE : Any, EFFECT : Any>(
                 MviKitDiagnostics.notifyIntentFailed(intent, t)
                 throw t
             }
+        }
+
+        val completion = object : Continuation<Unit> {
+            override val context: CoroutineContext = dispatchContext
+            override fun resumeWith(result: Result<Unit>) {
+                val exception = result.exceptionOrNull()
+                if (exception != null) {
+                    onError(exception)
+                }
+            }
+        }
+
+        try {
+            val result = block.startCoroutineUninterceptedOrReturn(completion)
+            if (result == COROUTINE_SUSPENDED) {
+                // Coroutine suspended, will be resumed by the completion continuation
+            }
+        } catch (t: Throwable) {
+            onError(t)
         }
     }
 
@@ -316,12 +349,9 @@ abstract class ViewModel<STATE : Any, EFFECT : Any>(
      * Launches a coroutine inside the [viewModelScope] to execute asynchronous work.
      */
     protected fun launchIntent(
-        dispatcher: CoroutineDispatcher = Dispatchers.Main,
+        dispatcher: CoroutineDispatcher = Dispatchers.Main.immediate,
         block: suspend CoroutineScope.() -> Unit
     ) {
-        val exceptionHandler = CoroutineExceptionHandler { _, throwable ->
-            onError(throwable)
-        }
         viewModelScope.launch(dispatcher + exceptionHandler, block = block)
     }
 

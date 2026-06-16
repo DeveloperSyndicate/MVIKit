@@ -38,7 +38,6 @@ data class AuthForm(
     val phone: String,
     @Password
     val password: String,
-    val isLoading: Boolean
 )
 
 @Composable

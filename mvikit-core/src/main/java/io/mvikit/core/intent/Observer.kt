@@ -52,14 +52,20 @@ object MviKitDiagnostics {
     }
 
     internal fun notifyIntentReceived(intent: Intent) {
-        observers.forEach { it.onIntentReceived(intent) }
+        if (observers.isNotEmpty()) {
+            observers.forEach { it.onIntentReceived(intent) }
+        }
     }
 
     internal fun notifyIntentCompleted(intent: Intent) {
-        observers.forEach { it.onIntentCompleted(intent) }
+        if (observers.isNotEmpty()) {
+            observers.forEach { it.onIntentCompleted(intent) }
+        }
     }
 
     internal fun notifyIntentFailed(intent: Intent, throwable: Throwable) {
-        observers.forEach { it.onIntentFailed(intent, throwable) }
+        if (observers.isNotEmpty()) {
+            observers.forEach { it.onIntentFailed(intent, throwable) }
+        }
     }
 }

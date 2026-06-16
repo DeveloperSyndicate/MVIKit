@@ -57,18 +57,26 @@ object MviKitActionDiagnostics {
     }
 
     internal fun notifyStarted(key: String) {
-        observers.forEach { it.onStarted(key) }
+        if (observers.isNotEmpty()) {
+            observers.forEach { it.onStarted(key) }
+        }
     }
 
     internal fun notifySuccess(key: String) {
-        observers.forEach { it.onSuccess(key) }
+        if (observers.isNotEmpty()) {
+            observers.forEach { it.onSuccess(key) }
+        }
     }
 
     internal fun notifyFailure(key: String, throwable: Throwable) {
-        observers.forEach { it.onFailure(key, throwable) }
+        if (observers.isNotEmpty()) {
+            observers.forEach { it.onFailure(key, throwable) }
+        }
     }
 
     internal fun notifyCancelled(key: String) {
-        observers.forEach { it.onCancelled(key) }
+        if (observers.isNotEmpty()) {
+            observers.forEach { it.onCancelled(key) }
+        }
     }
 }
