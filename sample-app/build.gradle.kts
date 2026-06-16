@@ -36,6 +36,7 @@ android {
 dependencies {
     implementation(project(":mvikit-core"))
     implementation(project(":mvikit-compose"))
+    implementation(project(":mvikit-form"))
 
     implementation(libs.androidx.lifecycle.viewmodel.compose)
 

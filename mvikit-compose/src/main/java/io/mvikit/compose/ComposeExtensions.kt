@@ -14,6 +14,26 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collect
 
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.unit.dp
+import io.mvikit.form.BoundField
+import io.mvikit.form.Form
+import io.mvikit.form.FormBuilder
+import io.mvikit.form.FormField
+import io.mvikit.form.ValidationMode
+import io.mvikit.form.form
+
 /**
  * Collects values from the given [StateFlow] in a lifecycle-aware manner.
  *
@@ -85,4 +105,81 @@ fun MviViewModel<*, *>.dispatchIntent(intent: Intent) {
 fun MviViewModel<*, *>.rememberActionState(key: String): Boolean {
     val state by collectState(this.actionState)
     return state.runningActions.contains(key)
+}
+
+/**
+ * Instantiates and remembers a [Form] instance inside Compose.
+ *
+ * @param validationMode The validation mode of the form. Defaults to [ValidationMode.ON_CHANGE].
+ * @param builder DSL configuration builder block.
+ */
+@Composable
+fun rememberForm(
+    validationMode: ValidationMode = ValidationMode.ON_CHANGE,
+    builder: FormBuilder.() -> Unit
+): Form {
+    return remember { form(validationMode, builder) }
+}
+
+/**
+ * Binds a specific field by [name] from the form into Compose reactive [State].
+ *
+ * @param name The field name.
+ * @return A Compose [State] wrapping the [FormField] state snapshot.
+ */
+@Composable
+fun <T> Form.bindField(name: String): State<FormField<T>> {
+    val fieldsState by collectState(this.fields)
+    return remember(fieldsState, name) {
+        derivedStateOf {
+            @Suppress("UNCHECKED_CAST")
+            (fieldsState[name] ?: FormField("" as Any?)) as FormField<T>
+        }
+    }
+}
+
+/**
+ * A highly reusable Material3 OutlinedTextField wrapped with MVIKit Form binding features.
+ *
+ * Handles state synchronization, validation triggers, and error message rendering.
+ *
+ * @param field The [BoundField] descriptor corresponding to the field (e.g. `form["email"]`).
+ */
+@Composable
+fun FormTextField(
+    field: BoundField<String>,
+    modifier: Modifier = Modifier,
+    label: @Composable (() -> Unit)? = null,
+    enabled: Boolean = true,
+    visualTransformation: VisualTransformation = VisualTransformation.None,
+    keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
+    keyboardActions: KeyboardActions = KeyboardActions.Default,
+    singleLine: Boolean = true
+) {
+    val fieldState by field.form.bindField<String>(field.name)
+
+    Column(modifier = modifier) {
+        OutlinedTextField(
+            value = fieldState.value,
+            onValueChange = { newValue ->
+                field.updateValue(newValue)
+            },
+            label = label,
+            isError = fieldState.error != null,
+            enabled = enabled,
+            visualTransformation = visualTransformation,
+            keyboardOptions = keyboardOptions,
+            keyboardActions = keyboardActions,
+            singleLine = singleLine,
+            modifier = Modifier.fillMaxWidth()
+        )
+        if (fieldState.error != null) {
+            Text(
+                text = fieldState.error ?: "",
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(start = 16.dp, top = 4.dp)
+            )
+        }
+    }
 }

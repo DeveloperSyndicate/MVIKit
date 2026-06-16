@@ -213,3 +213,93 @@ transaction {
     update { copy(errorMessage = null) }
 }
 ```
+
+---
+
+## 10. Form Engine & Validation Framework (Phase 4)
+
+Phase 4 introduces a reflection-free, type-safe validation and form state synchronization engine. It serves as the runtime contract for future KSP code generators.
+
+### 10.1 Key API Abstractions
+* **`FormState`**: Marker interface that developers implement to define form data models.
+* **`FormField<T>`**: Immutable state containing value, validation errors, touched state (focus tracking), and dirty state.
+* **`BoundField<T>`**: Class returned by the form's index operator `form["email"]` that links a field back to its parent `Form` for updating.
+* **`ValidationResult`**: The result of validation checks, detailing overall validity and a map of field error strings.
+* **`Validator<T>`**: Generic interface contract for validators. Returns `null` if valid, or a string error message if invalid.
+
+### 10.2 Built-in Validators
+* `RequiredValidator`: Validates that a field is not null, not blank for strings, and not empty for collections or maps.
+* `EmailValidator`: Validates RFC-compliant email address format.
+* `PasswordValidator`: Validates password length and complex rules (uppercase, lowercase, special characters, digits).
+* `MinLengthValidator` / `MaxLengthValidator`
+* `RegexValidator`
+* `MatchValidator`: Compares field value against a reference provider value (e.g., password matching).
+
+### 10.3 Form Validation Modes
+The validation engine supports four `ValidationMode` strategies:
+1. **`ON_CHANGE`**: Validates the value and displays errors immediately as the user types.
+2. **`ON_BLUR`**: Validates and displays errors only after focus is lost (marked touched).
+3. **`ON_SUBMIT`**: Displays errors only during form submission.
+4. **`MANUAL`**: Validation only displays errors when calling `validate()` manually.
+
+### 10.4 Multi-Step Form Support
+Multi-step checkout patterns are coordinated using `MultiStepForm`:
+```kotlin
+val multiForm = MultiStepForm(listOf(shippingForm, contactForm, paymentForm))
+```
+It isolates validation state per step, handles progress indexing, validates step-by-step navigation boundaries, and runs global validation check across all steps via `validateAll()`.
+
+---
+
+## 11. Compose Integration (Phase 4)
+
+The Compose module contains bindings that eliminate layout boilerplate:
+
+* **`rememberForm`**: Remembers form states across recompositions.
+* **`bindField`**: Returns a lifecycle-aware Compose `State<FormField<T>>`.
+* **`FormTextField`**: A Material3 OutlinedTextField that automates state synchronization, error display, and validation triggers.
+
+---
+
+## 12. Phase 3 to Phase 4 Migration Guide
+
+Upgrading to Phase 4 replaces repetitive state definitions and validation boilerplate with the declarative DSL engine.
+
+### Step 1: Replace Manual Form State with the Form Engine
+Instead of manually declaring form field states and handling text updates in the ViewModel:
+
+```kotlin
+// Phase 3 (Manual state & validation)
+data class SignUpState(
+    val email: String = "",
+    val emailError: String? = null
+)
+
+// Phase 4 (Declarative Form DSL)
+val form = rememberForm(ValidationMode.ON_CHANGE) {
+    field("email") {
+        required("Email is required")
+        email("Invalid email format")
+    }
+}
+```
+
+### Step 2: Use Automated FormTextField Bindings
+Replace standard `OutlinedTextField` implementations with `FormTextField` which automatically binds value updates and error displays:
+
+```kotlin
+// Phase 3
+OutlinedTextField(
+    value = state.email,
+    onValueChange = { onEmailChange(it) },
+    isError = state.emailError != null,
+    supportingText = { state.emailError?.let { Text(it) } }
+)
+
+// Phase 4
+FormTextField(
+    field = form["email"],
+    label = { Text("Email") }
+)
+```
+

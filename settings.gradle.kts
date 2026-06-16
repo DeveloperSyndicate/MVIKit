@@ -25,4 +25,5 @@ dependencyResolutionManagement {
 rootProject.name = "MVIKitSampleApp"
 include(":mvikit-core")
 include(":mvikit-compose")
+include(":mvikit-form")
 include(":sample-app")
