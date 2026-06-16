@@ -80,6 +80,17 @@ abstract class MviViewModel<STATE : Any, EFFECT : Any>(
     }
 
     /**
+     * Registers a handler for a specific subtype [I] of [Intent] dynamically (used by KSP code generation).
+     */
+    @Suppress("UNCHECKED_CAST")
+    fun <I : Intent> registerIntent(
+        klass: kotlin.reflect.KClass<I>,
+        handler: suspend (I) -> Unit
+    ) {
+        intentRegistry.register(klass as kotlin.reflect.KClass<Intent>, handler as suspend (Intent) -> Unit)
+    }
+
+    /**
      * Adds an [IntentMiddleware] interceptor to the dispatch execution pipeline.
      */
     fun addMiddleware(middleware: IntentMiddleware) {
@@ -120,7 +131,7 @@ abstract class MviViewModel<STATE : Any, EFFECT : Any>(
     /**
      * Updates the UI state atomically by applying the [reducer] block.
      */
-    protected fun reduce(reducer: STATE.() -> STATE) {
+    fun reduce(reducer: STATE.() -> STATE) {
         _state.update { currentState ->
             currentState.reducer()
         }
@@ -132,7 +143,7 @@ abstract class MviViewModel<STATE : Any, EFFECT : Any>(
      *
      * @param block A lambda executed within [TransactionScope] context.
      */
-    protected fun transaction(block: TransactionScope<STATE>.() -> Unit) {
+    fun transaction(block: TransactionScope<STATE>.() -> Unit) {
         _state.update { currentState ->
             val scope = TransactionScope(currentState)
             scope.block()
@@ -154,7 +165,7 @@ abstract class MviViewModel<STATE : Any, EFFECT : Any>(
      * @param exponentialBackoff Double the wait time on subsequent retry attempts.
      * @param loadingKey Optional key tracked in [actionState] running actions. Defaults to [key].
      */
-    protected fun <T> execute(
+    fun <T> execute(
         key: String = java.util.UUID.randomUUID().toString(),
         request: suspend () -> T,
         onSuccess: suspend (T) -> Unit,

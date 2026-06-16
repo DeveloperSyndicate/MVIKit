@@ -381,3 +381,78 @@ MviKitNavigationHost(
 ```
 
 
+## 16. KSP Code Generation Platform (Phase 6)
+
+Phase 6 introduces a compile-time, annotation-driven code generation engine using Kotlin Symbol Processing (KSP). It reduces MVI boilerplate by 70-90% while keeping the system 100% reflection-free and explicit.
+
+### 16.1 Target Annotation Engine
+- **`@MviScreen(name)`**: Generates stub classes `NameState`, `NameIntent`, `NameEffect`, and `NameContract` for standard setups.
+- **`@GenerateState`**: Resolves properties of an interface to generate a matching immutable state data class with type-safe default values.
+- **`@MviViewModel`**: Scans ViewModels for `@IntentHandler` and `@Reducer` methods, producing extension function bindings `registerGeneratedIntents()`.
+- **`@MviAction`**: Generates wrapper functions wrapping suspending methods into MVIKit's `execute(...)` queue engine.
+- **Form Validators**: Translates form class annotations (`@Required`, `@Email`, `@Password`, `@MatchField`, etc.) into reflection-free validation validators classes.
+- **`@Destination` / `@DeepLink` / `@ComposableScreen`**: Translates routing annotations into `registerAllGeneratedDeepLinks()` and `registerAllGeneratedScreens(navigator)` graph declarations.
+
+### 16.2 Compile-Time Validation Checks
+The processor intercepts compilation errors early by verifying:
+1. **Duplicate Destinations**: Ensures class simple names are unique.
+2. **Invalid MatchField**: Confirms target field names exist.
+3. **Invalid Deep Links**: Verifies parameters mapped in `{userId}` match constructor parameters.
+4. **Invalid Intents**: Rejects duplicate intent handler/reducer registrations.
+
+---
+
+## 17. Phase 5 to Phase 6 Migration Guide
+
+Upgrading to Phase 6 replaces manual intent registration, form builder blocks, and screen mapping code with annotation processing.
+
+### Step 1: Add KSP to Your Module
+Apply the KSP plugin and add dependencies in your module's `build.gradle.kts`:
+```kotlin
+plugins {
+    alias(libs.plugins.ksp)
+}
+
+dependencies {
+    implementation(project(":mvikit-annotations"))
+    ksp(project(":mvikit-ksp"))
+}
+```
+
+### Step 2: Swap Manual Intent Handler Registrations
+Instead of manually declaring registration blocks in your ViewModel constructor:
+```kotlin
+// Phase 5
+init {
+    intent<UpdateEmail> { handleUpdateEmail(it) }
+}
+
+// Phase 6
+@io.mvikit.annotations.MviViewModel
+class MyViewModel : MviViewModel<...> {
+    init {
+        registerGeneratedIntents()
+    }
+
+    @IntentHandler
+    fun handleUpdateEmail(intent: UpdateEmail) { ... }
+}
+```
+
+### Step 3: Swap Navigation Graph Mapping
+Replace manual screen registrations in Compose host initialization:
+```kotlin
+// Phase 5
+val graph = navigationGraph(StartScreen) {
+    screen<HomeScreen> { HomeScreenView(navigator) }
+}
+
+// Phase 6
+val graph = navigationGraph(StartScreen) {
+    registerAllGeneratedScreens(navigator)
+}
+```
+*Screens are declared using `@Destination` or `@ComposableScreen(viewName = "MyScreenView")`.*
+
+
+
