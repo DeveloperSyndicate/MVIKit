@@ -25,6 +25,11 @@ import org.orbitmvi.orbit.container
 import org.orbitmvi.orbit.syntax.simple.intent
 import org.orbitmvi.orbit.syntax.simple.reduce
 import java.lang.management.ManagementFactory
+import io.mvikit.core.intent.IntentExecutionPolicy
+import io.mvikit.core.intent.MviKitDiagnostics
+import io.mvikit.core.intent.IntentObserver
+import org.junit.Assert.assertTrue
+import java.lang.ref.WeakReference
 
 // 1. Shared State Definition
 data class BenchmarkState(
@@ -63,6 +68,18 @@ class MviKitBenchmarkViewModel : ViewModel<BenchmarkState, Unit>(BenchmarkState(
         reduce { copy(counter = counter + count) }
         reduce { copy(isLoading = !isLoading) }
         reduce { copy(errorMessage = if (counter % 2 == 0) "Even" else "Odd") }
+    }
+}
+
+class MviKitSequentialBenchmarkViewModel : ViewModel<BenchmarkState, Unit>(
+    BenchmarkState(),
+    IntentExecutionPolicy.SEQUENTIAL
+) {
+    init {
+        registerIntent(IncrementIntent::class) {
+            delay(20) // simulate async work / suspension
+            reduce { copy(counter = counter + 1) }
+        }
     }
 }
 
@@ -279,5 +296,39 @@ class FrameworkBenchmarkTest {
 
         // Assert state accuracy
         assertEquals(iterations, mvikitVm2.state.value.counter)
+    }
+
+    @Test
+    fun testSequentialIntentExecution() = runTest {
+        val vm = MviKitSequentialBenchmarkViewModel()
+        val job1 = launch { vm.dispatch(IncrementIntent) }
+        val job2 = launch { vm.dispatch(IncrementIntent) }
+        val job3 = launch { vm.dispatch(IncrementIntent) }
+
+        // Wait for all dispatches to finish
+        vm.state.first { it.counter == 3 }
+        assertEquals(3, vm.state.value.counter)
+    }
+
+    @Test
+    fun testDiagnosticsObserverWeakReferenceLeak() {
+        var observer: IntentObserver? = object : IntentObserver {
+            override fun onIntentReceived(intent: Intent) {}
+            override fun onIntentCompleted(intent: Intent) {}
+            override fun onIntentFailed(intent: Intent, throwable: Throwable) {}
+        }
+        val weakRef = WeakReference(observer)
+
+        MviKitDiagnostics.addObserver(observer!!)
+        assertTrue(MviKitDiagnostics.hasObservers())
+
+        // Clear strong reference and force GC
+        observer = null
+        System.gc()
+        Thread.sleep(100)
+        System.gc()
+
+        // Verify that the diagnostics engine automatically cleaned up the observer
+        assertTrue(!MviKitDiagnostics.hasObservers())
     }
 }

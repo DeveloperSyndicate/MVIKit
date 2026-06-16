@@ -31,6 +31,7 @@ import kotlin.coroutines.Continuation
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.intrinsics.startCoroutineUninterceptedOrReturn
 import kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED
+import io.mvikit.core.intent.IntentExecutionPolicy
 
 /**
  * A lightweight, production-ready ViewModel that implements the Model-View-Intent (MVI) architecture.
@@ -43,7 +44,8 @@ import kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED
  * duplicate handling, and loading state tracking in [actionState].
  */
 abstract class ViewModel<STATE : Any, EFFECT : Any>(
-    initialState: STATE
+    initialState: STATE,
+    private val intentExecutionPolicy: IntentExecutionPolicy = IntentExecutionPolicy.CONCURRENT
 ) : JetpackViewModel() {
 
     private val _state = MutableStateFlow(initialState)
@@ -82,6 +84,33 @@ abstract class ViewModel<STATE : Any, EFFECT : Any>(
         viewModelScope.coroutineContext + Dispatchers.Main.immediate + exceptionHandler
     }
 
+    private var reusableScope: TransactionScope<STATE>? = null
+
+    private val intentChannel = if (intentExecutionPolicy == IntentExecutionPolicy.SEQUENTIAL) {
+        Channel<Intent>(Channel.UNLIMITED)
+    } else null
+
+    init {
+        if (intentChannel != null) {
+            viewModelScope.launch(dispatchContext) {
+                for (intent in intentChannel) {
+                    processIntentSequential(intent)
+                }
+            }
+        }
+    }
+
+    private suspend fun processIntentSequential(intent: Intent) {
+        MviKitDiagnostics.notifyIntentReceived(intent)
+        try {
+            executeChain(intent, 0)
+            MviKitDiagnostics.notifyIntentCompleted(intent)
+        } catch (t: Throwable) {
+            MviKitDiagnostics.notifyIntentFailed(intent, t)
+            onError(t)
+        }
+    }
+
 
 
     /**
@@ -115,6 +144,14 @@ abstract class ViewModel<STATE : Any, EFFECT : Any>(
      * Dispatches the given [intent] to this ViewModel.
      */
     fun dispatch(intent: Intent) {
+        if (intentChannel != null) {
+            intentChannel.trySend(intent)
+        } else {
+            runConcurrentIntent(intent)
+        }
+    }
+
+    private fun runConcurrentIntent(intent: Intent) {
         val block: suspend () -> Unit = {
             MviKitDiagnostics.notifyIntentReceived(intent)
             try {
@@ -139,7 +176,7 @@ abstract class ViewModel<STATE : Any, EFFECT : Any>(
         try {
             val result = block.startCoroutineUninterceptedOrReturn(completion)
             if (result == COROUTINE_SUSPENDED) {
-                // Coroutine suspended, will be resumed by the completion continuation
+                // Coroutine suspended, will be resumed by completion continuation
             }
         } catch (t: Throwable) {
             onError(t)
@@ -153,12 +190,21 @@ abstract class ViewModel<STATE : Any, EFFECT : Any>(
                 executeChain(intent, index + 1)
             }
         } else {
-            val handler = intentRegistry.getHandler(intent::class)
-            requireNotNull(handler) {
-                "No handler registered for intent type: ${intent::class.qualifiedName ?: intent::class.simpleName}"
-            }
-            (handler as IntentHandler<Intent>)(intent)
+            executeHandler(intent)
         }
+    }
+
+    /**
+     * Executes the registered handler for the given [intent].
+     * Can be overridden by generated wrappers to provide compile-time direct dispatch.
+     */
+    @Suppress("UNCHECKED_CAST")
+    protected open suspend fun executeHandler(intent: Intent) {
+        val handler = intentRegistry.getHandler(intent::class)
+        requireNotNull(handler) {
+            "No handler registered for intent type: ${intent::class.qualifiedName ?: intent::class.simpleName}"
+        }
+        (handler as IntentHandler<Intent>)(intent)
     }
 
     /**
@@ -178,7 +224,10 @@ abstract class ViewModel<STATE : Any, EFFECT : Any>(
      */
     fun transaction(block: TransactionScope<STATE>.() -> Unit) {
         _state.update { currentState ->
-            val scope = TransactionScope(currentState)
+            val scope = reusableScope ?: TransactionScope(currentState).also {
+                reusableScope = it
+            }
+            scope.currentState = currentState
             scope.block()
             scope.currentState
         }

@@ -28,7 +28,7 @@ interface IntentObserver {
  * Diagnostics hub managing global intent observers.
  */
 object MviKitDiagnostics {
-    private val observers = CopyOnWriteArrayList<IntentObserver>()
+    private val observers = WeakObserverList<IntentObserver>()
 
     /**
      * Registers a global [IntentObserver].
@@ -49,6 +49,13 @@ object MviKitDiagnostics {
      */
     fun clearObservers() {
         observers.clear()
+    }
+
+    /**
+     * Checks if there are any active intent observers registered.
+     */
+    fun hasObservers(): Boolean {
+        return observers.isNotEmpty()
     }
 
     internal fun notifyIntentReceived(intent: Intent) {

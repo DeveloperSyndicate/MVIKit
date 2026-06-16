@@ -575,6 +575,15 @@ class MviSymbolProcessor(
                 wrapperInitBlock.add("}\n")
             }
 
+            wrapperClassSpecBuilder.addInitializerBlock(wrapperInitBlock.build())
+
+            // Add override suspend fun executeHandler(intent: Intent)
+            val executeHandlerFunSpecBuilder = FunSpec.builder("executeHandler")
+                .addModifiers(KModifier.OVERRIDE, KModifier.SUSPEND)
+                .addParameter("intent", ClassName("io.mvikit.core.intent", "Intent"))
+
+            val whenCode = CodeBlock.builder()
+            whenCode.add("when (intent) {\n")
             for (handler in handlers) {
                 val methodName = handler.simpleName.asString()
                 val subclassName = methodName.replaceFirstChar { it.uppercase() }
@@ -582,14 +591,17 @@ class MviSymbolProcessor(
 
                 val params = handler.parameters
                 if (params.isEmpty()) {
-                    wrapperInitBlock.addStatement("registerIntent(%T::class) { viewModel.%N() }", subclassFq, methodName)
+                    whenCode.add("    is %T -> viewModel.%N()\n", subclassFq, methodName)
                 } else {
                     val paramAccess = params.joinToString(", ") { "intent.${it.name!!.asString()}" }
-                    wrapperInitBlock.addStatement("registerIntent(%T::class) { intent -> viewModel.%N(%L) }", subclassFq, methodName, paramAccess)
+                    whenCode.add("    is %T -> viewModel.%N(%L)\n", subclassFq, methodName, paramAccess)
                 }
             }
+            whenCode.add("    else -> super.executeHandler(intent)\n")
+            whenCode.add("}\n")
 
-            wrapperClassSpecBuilder.addInitializerBlock(wrapperInitBlock.build())
+            executeHandlerFunSpecBuilder.addCode(whenCode.build())
+            wrapperClassSpecBuilder.addFunction(executeHandlerFunSpecBuilder.build())
 
             // Add updateStateInternal
             wrapperClassSpecBuilder.addFunction(

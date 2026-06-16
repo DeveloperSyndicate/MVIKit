@@ -1,6 +1,6 @@
 package io.mvikit.core.action
 
-import java.util.concurrent.CopyOnWriteArrayList
+import io.mvikit.core.intent.WeakObserverList
 
 /**
  * Interface defining lifecycle hooks for asynchronous actions.
@@ -33,7 +33,7 @@ interface ActionObserver {
  * Diagnostics hub managing global action observers.
  */
 object MviKitActionDiagnostics {
-    private val observers = CopyOnWriteArrayList<ActionObserver>()
+    private val observers = WeakObserverList<ActionObserver>()
 
     /**
      * Registers a global [ActionObserver].
@@ -54,6 +54,13 @@ object MviKitActionDiagnostics {
      */
     fun clearObservers() {
         observers.clear()
+    }
+
+    /**
+     * Checks if there are any active action observers registered.
+     */
+    fun hasObservers(): Boolean {
+        return observers.isNotEmpty()
     }
 
     internal fun notifyStarted(key: String) {

@@ -11,7 +11,7 @@ class TransactionScope<STATE : Any>(initialState: STATE) {
      * The current accumulated state of the transaction.
      */
     var currentState: STATE = initialState
-        private set
+        internal set
 
     /**
      * Applies a state reduction block to the current intermediate state.
