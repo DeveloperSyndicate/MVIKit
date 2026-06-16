@@ -4,6 +4,7 @@ import io.mvikit.core.MviViewModelRegistry
 import io.mvikit.form.ValidationMode
 import io.mvikit.navigation.DeepLinkSystem
 import io.mvikit.generated.navigation.registerAllGeneratedDeepLinks
+import androidx.lifecycle.SavedStateHandle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
@@ -114,5 +115,30 @@ class KspGeneratedCodeTest {
         val matchedScreen = DeepLinkSystem.handle("mvikit://login")
         assertNotNull(matchedScreen)
         assertTrue(matchedScreen is LoginScreen)
+    }
+
+    @Test
+    fun testSavedStateHandleRestorationAndUpdates() = runTest {
+        val savedStateHandle = SavedStateHandle(
+            mapOf(
+                "email" to "saved@mvikit.io",
+                "password" to "savedpassword"
+            )
+        )
+        val viewModel = LoginViewModel(AuthRepository())
+        val wrapper = LoginViewModel_GeneratedWrapper(viewModel, savedStateHandle)
+
+        // 1. Assert initial state is successfully restored from SavedStateHandle
+        assertEquals("saved@mvikit.io", viewModel.state.email)
+        assertEquals("savedpassword", viewModel.state.password)
+        assertFalse(viewModel.state.isLoading)
+
+        // 2. Assert state update is immediately persisted back into the SavedStateHandle
+        viewModel.updateEmail("updated@mvikit.io")
+        assertEquals("updated@mvikit.io", viewModel.state.email)
+        
+        // Wait for state collection to propagate changes to savedStateHandle
+        delay(100)
+        assertEquals("updated@mvikit.io", savedStateHandle.get<String>("email"))
     }
 }

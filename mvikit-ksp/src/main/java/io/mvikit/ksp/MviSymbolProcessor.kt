@@ -301,6 +301,23 @@ class MviSymbolProcessor(
             stateProperties["validationErrors"] = Map::class.asClassName().parameterizedBy(STRING, STRING)
             stateProperties["errorMessage"] = STRING.copy(nullable = true)
 
+            // Gather all persisted properties
+            val persistedProperties = mutableSetOf<String>()
+            if (formSymbol != null) {
+                for (prop in formSymbol.getDeclaredProperties()) {
+                    persistedProperties.add(prop.simpleName.asString())
+                }
+            }
+            for (handler in handlers) {
+                for (param in handler.parameters) {
+                    val name = param.name!!.asString()
+                    val hasPersist = param.annotations.any { it.shortName.asString() == "Persist" }
+                    if (hasPersist) {
+                        persistedProperties.add(name)
+                    }
+                }
+            }
+
             val stateClassName = ClassName(packageName, "${prefix}State")
             val builderClassName = ClassName(packageName, "${prefix}StateBuilder")
             val intentClassName = ClassName(packageName, "${prefix}Intent")
@@ -413,10 +430,16 @@ class MviSymbolProcessor(
                 .writeTo(codeGenerator, dependencies)
 
             // --- 2.5 Generate ViewModel Wrapper class ---
+            val savedStateHandleClassName = ClassName("androidx.lifecycle", "SavedStateHandle")
             val wrapperClassSpecBuilder = TypeSpec.classBuilder(wrapperClassName)
                 .primaryConstructor(
                     FunSpec.constructorBuilder()
                         .addParameter("viewModel", vmClassName)
+                        .addParameter(
+                            ParameterSpec.builder("savedStateHandle", savedStateHandleClassName.copy(nullable = true))
+                                .defaultValue("null")
+                                .build()
+                        )
                         .build()
                 )
                 .addProperty(
@@ -424,8 +447,38 @@ class MviSymbolProcessor(
                         .initializer("viewModel")
                         .build()
                 )
-                .superclass(ClassName("io.mvikit.core", "ViewModel").parameterizedBy(stateClassName, ANY))
-                .addSuperclassConstructorParameter("%T()", stateClassName)
+                .addProperty(
+                    PropertySpec.builder("savedStateHandle", savedStateHandleClassName.copy(nullable = true))
+                        .initializer("savedStateHandle")
+                        .build()
+                )
+
+            val superclassInitCode = CodeBlock.builder()
+            if (persistedProperties.isEmpty()) {
+                superclassInitCode.add("%T()", stateClassName)
+            } else {
+                superclassInitCode.add("run {\n")
+                superclassInitCode.add("    if (savedStateHandle != null) {\n")
+                superclassInitCode.add("        %T(\n", stateClassName)
+                for ((name, typeName) in stateProperties) {
+                    if (persistedProperties.contains(name)) {
+                        superclassInitCode.add("            %N = savedStateHandle.get<%T>(%S) ?: ", name, typeName, name)
+                        val defaultValue = getDefaultValueLiteral(typeName)
+                        superclassInitCode.add("%L,\n", defaultValue)
+                    } else {
+                        val defaultValue = getDefaultValueLiteral(typeName)
+                        superclassInitCode.add("            %N = %L,\n", name, defaultValue)
+                    }
+                }
+                superclassInitCode.add("        )\n")
+                superclassInitCode.add("    } else {\n")
+                superclassInitCode.add("        %T()\n", stateClassName)
+                superclassInitCode.add("    }\n")
+                superclassInitCode.add("}")
+            }
+
+            wrapperClassSpecBuilder.superclass(ClassName("io.mvikit.core", "ViewModel").parameterizedBy(stateClassName, ANY))
+                .addSuperclassConstructorParameter(superclassInitCode.build())
 
             if (formSymbol != null) {
                 val validatorClassName = ClassName(packageName, "${prefix}FormValidator")
@@ -438,6 +491,20 @@ class MviSymbolProcessor(
 
             val wrapperInitBlock = CodeBlock.builder()
             wrapperInitBlock.addStatement("io.mvikit.core.MviViewModelRegistry.register(viewModel, this)")
+
+            val viewModelScopeMember = MemberName("androidx.lifecycle", "viewModelScope")
+            val launchMember = MemberName("kotlinx.coroutines", "launch")
+            if (persistedProperties.isNotEmpty()) {
+                wrapperInitBlock.add("if (savedStateHandle != null) {\n")
+                wrapperInitBlock.add("    this.%M.%M {\n", viewModelScopeMember, launchMember)
+                wrapperInitBlock.add("        state.collect { currentState ->\n")
+                for (name in persistedProperties) {
+                    wrapperInitBlock.add("            savedStateHandle[%S] = currentState.%N\n", name, name)
+                }
+                wrapperInitBlock.add("        }\n")
+                wrapperInitBlock.add("    }\n")
+                wrapperInitBlock.add("}\n")
+            }
 
             for (handler in handlers) {
                 val methodName = handler.simpleName.asString()
@@ -472,6 +539,7 @@ class MviSymbolProcessor(
             )
 
             FileSpec.builder(packageName, "${prefix}ViewModel_GeneratedWrapper")
+                .addImport("kotlinx.coroutines.flow", "collect")
                 .addType(wrapperClassSpecBuilder.build())
                 .build()
                 .writeTo(codeGenerator, dependencies)
@@ -479,6 +547,7 @@ class MviSymbolProcessor(
             // --- 2.6 Generate Extensions File ---
             val fileSpecBuilder = FileSpec.builder(packageName, "${prefix}ViewModel_Extensions")
                 .addImport("androidx.compose.runtime", "collectAsState")
+                .addImport("androidx.lifecycle", "createSavedStateHandle")
 
             // val LoginViewModel.state: LoginState
             fileSpecBuilder.addProperty(
@@ -588,7 +657,8 @@ class MviSymbolProcessor(
                         CodeBlock.builder()
                             .addStatement("val wrapper = androidx.lifecycle.viewmodel.compose.viewModel<%T>(", wrapperClassName)
                             .addStatement("    initializer = {")
-                            .addStatement("        %T(factory())", wrapperClassName)
+                            .addStatement("        val savedStateHandle = this.createSavedStateHandle()")
+                            .addStatement("        %T(factory(), savedStateHandle)", wrapperClassName)
                             .addStatement("    }")
                             .addStatement(")")
                             .addStatement("return wrapper.viewModel")
