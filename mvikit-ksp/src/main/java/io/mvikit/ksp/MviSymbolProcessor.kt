@@ -80,6 +80,27 @@ class MviSymbolProcessor(
         for (symbol in vmSymbols) {
             if (symbol !is KSClassDeclaration || symbol.classKind != ClassKind.CLASS) {
                 logger.error("@MviViewModel annotation can only be applied to Kotlin classes", symbol)
+                continue
+            }
+
+            val handlers = symbol.getDeclaredFunctions().filter { fn ->
+                fn.annotations.any { it.shortName.asString() == "IntentHandler" }
+            }.toList()
+
+            val methodNames = mutableMapOf<String, KSFunctionDeclaration>()
+            for (handler in handlers) {
+                val methodName = handler.simpleName.asString()
+                val normalizedName = methodName.replaceFirstChar { it.uppercase() }
+                if (methodNames.containsKey(normalizedName)) {
+                    val duplicateHandler = methodNames[normalizedName]!!
+                    logger.error(
+                        "Duplicate @IntentHandler function name '$methodName' (normalized to '$normalizedName'). " +
+                        "This conflicts with function '${duplicateHandler.simpleName.asString()}' as they both generate the same Intent class.",
+                        handler
+                    )
+                } else {
+                    methodNames[normalizedName] = handler
+                }
             }
         }
 
