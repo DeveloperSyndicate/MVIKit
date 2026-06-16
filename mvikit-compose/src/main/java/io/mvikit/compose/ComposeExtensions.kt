@@ -13,6 +13,9 @@ import io.mvikit.core.intent.Intent
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.distinctUntilChanged
+
 
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -50,6 +53,28 @@ fun <STATE> collectState(
     state: StateFlow<STATE>
 ): State<STATE> {
     return state.collectAsStateWithLifecycle()
+}
+
+/**
+ * Subscribes to a specific sub-property of the ViewModel state in a lifecycle-aware manner.
+ *
+ * Recompositions are triggered only when the selected value changes, avoiding unnecessary
+ * redraws for unrelated state changes.
+ *
+ * @param selector A lambda expression transforming the state to the selected sub-property.
+ * @return A Compose [State] wrapping the selected property value.
+ */
+@Composable
+fun <STATE : Any, T> ViewModel<STATE, *>.selectState(
+    selector: (STATE) -> T
+): State<T> {
+    val selectedFlow = remember(this, selector) {
+        this.state
+            .map { selector(it) }
+            .distinctUntilChanged()
+    }
+    val initialValue = remember(this, selector) { selector(this.state.value) }
+    return selectedFlow.collectAsStateWithLifecycle(initialValue = initialValue)
 }
 
 /**
