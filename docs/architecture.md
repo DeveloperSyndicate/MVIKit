@@ -303,3 +303,81 @@ FormTextField(
 )
 ```
 
+---
+
+## 13. Navigation & Side Effects Engine (Phase 5)
+
+Phase 5 introduces a type-safe, platform-agnostic navigation backstack and standardized side-effects execution system. It eliminates custom ViewModel side-effect class declarations.
+
+### 13.1 Screen Routing Contracts
+* **`Screen`**: Marker interface that route definitions implement. Screens can be `object`s (for static routes) or `data class`es (for parametrized routes).
+* **`ScreenResult`**: Marker interface for payload values returned when screens are popped.
+
+### 13.2 Unified UI Effects
+Custom side-effect sealed classes are replaced by the standardized `UiEffect` hierarchy:
+- `Toast(message, durationLong)`: Pops standard toast alerts.
+- `Snackbar(message, actionLabel)`: Pops snackbar alerts.
+- `Dialog(title, message, deferred)`: Suspends until the user confirms or cancels an AlertDialog.
+- `BottomSheet(sheetScreen, deferred)`: Suspends until a ModalBottomSheet finishes returning a result.
+- `Permission(permissions, deferred)`: Suspends until standard Android runtime permissions are resolved.
+
+### 13.3 Suspend-Based APIs
+The `Navigator` exposes coroutine-friendly suspending signatures that resolve values asynchronously without registering complex Activity contracts:
+- `val result = navigator.navigateForResult<MyResult>(MyScreen)`
+- `val confirmed = navigator.showConfirmationDialog(title, message)`
+- `val granted = navigator.requestPermission(CAMERA)`
+
+---
+
+## 14. Compose Navigation Integration (Phase 5)
+
+We provide a custom, type-safe navigation graph builder and Composable host:
+
+* **`navigationGraph`**: DSL to register screen class matches:
+  ```kotlin
+  val graph = navigationGraph(StartScreen) {
+      screen<LoginScreen> { LoginView(navigator) }
+      screen<HomeScreen> { HomeView(navigator) }
+  }
+  ```
+* **`MviKitNavigationHost`**: The container managing backstack updates, rendering Dialog overlays, presenting modal Bottom Sheets, and resolving runtime permissions via Compose Activity Result APIs.
+
+---
+
+## 15. Phase 4 to Phase 5 Migration Guide
+
+Upgrading to Phase 5 removes custom side-effect subclasses and integrates a unified screen-routing pipeline.
+
+### Step 1: Migrate Custom View Effects to Unified UiEffect Helpers
+Instead of declaring custom effect sealed classes in your ViewModels:
+
+```kotlin
+// Phase 4 (Custom effect classes)
+sealed interface DetailEffect {
+    data class ShowToast(val text: String) : DetailEffect
+    data object CloseScreen : DetailEffect
+}
+
+// Phase 5 (Unified Navigator Calls)
+navigator.showToast("Success!")
+navigator.pop()
+```
+
+### Step 2: Swap Compose Routing to Type-Safe Screen Graph
+Replace string-based navigation routes or manual routing switches with the type-safe `MviKitNavigationHost`:
+
+```kotlin
+// Phase 4 (Manual navigation matching)
+when (currentScreen) {
+    "login" -> LoginScreen()
+    "home" -> HomeScreen()
+}
+
+// Phase 5 (Structured Navigation Graph)
+MviKitNavigationHost(
+    navigator = navigator,
+    graph = graph
+)
+```
+
+
