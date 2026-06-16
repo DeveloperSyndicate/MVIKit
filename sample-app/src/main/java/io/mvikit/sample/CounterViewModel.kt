@@ -1,52 +1,44 @@
 package io.mvikit.sample
 
 import io.mvikit.core.MviViewModel
+import io.mvikit.core.intent.LoggingMiddleware
 
 /**
- * ViewModel for the Counter Screen, leveraging MVIKit's [MviViewModel].
+ * ViewModel for the Counter Screen, leveraging MVIKit's [MviViewModel] and declarative Intent System.
  *
- * Exposes methods to increment, decrement, and reset the counter, as well as trigger
- * a one-time toast effect.
+ * All actions are handled in a centralized, type-safe manner by registering handlers inside the `init` block.
+ * A built-in [LoggingMiddleware] is configured and enabled by default to showcase intent performance tracking.
  */
 class CounterViewModel : MviViewModel<CounterState, CounterEffect>(
     initialState = CounterState()
 ) {
 
-    /**
-     * Increments the current count by 1.
-     */
-    fun increment() {
-        reduce {
-            copy(count = count + 1)
-        }
-    }
+    init {
+        // Register Logging Middleware for intent tracking
+        addMiddleware(LoggingMiddleware(isEnabled = true))
 
-    /**
-     * Decrements the current count by 1.
-     */
-    fun decrement() {
-        reduce {
-            copy(count = count - 1)
+        // Register handlers for CounterIntents
+        intent<CounterIntent.Increment> {
+            reduce {
+                copy(count = count + 1)
+            }
         }
-    }
 
-    /**
-     * Resets the current count to 0.
-     */
-    fun reset() {
-        reduce {
-            copy(count = 0)
+        intent<CounterIntent.Decrement> {
+            reduce {
+                copy(count = count - 1)
+            }
         }
-    }
 
-    /**
-     * Emits a toast notification side effect with the specified [message].
-     *
-     * @param message The message to show in the toast.
-     */
-    fun showToast(message: String) {
-        launchIntent {
-            effect(CounterEffect.ShowToast(message))
+        intent<CounterIntent.Reset> {
+            reduce {
+                copy(count = 0)
+            }
+        }
+
+        intent<CounterIntent.ShowToast> { showToastIntent ->
+            // Side effects are triggered as suspending operations
+            effect(CounterEffect.ShowToast(showToastIntent.message))
         }
     }
 }

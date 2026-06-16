@@ -2,6 +2,11 @@ package io.mvikit.core
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import io.mvikit.core.intent.Intent
+import io.mvikit.core.intent.IntentHandler
+import io.mvikit.core.intent.IntentMiddleware
+import io.mvikit.core.intent.IntentRegistry
+import io.mvikit.core.intent.MviKitDiagnostics
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
@@ -24,6 +29,9 @@ import kotlinx.coroutines.launch
  * State updates are performed using the [reduce] API, which guarantees thread safety and atomicity.
  * Asynchronous work and actions are launched via the [launchIntent] Coroutine API, which automatically
  * handles errors and routes them to [onError].
+ *
+ * Handlers for strongly typed [Intent]s can be registered using the [intent] builder inside initialization
+ * blocks, and user actions can be dispatched using the [dispatch] API.
  *
  * @param STATE The immutable class representing the state of the UI.
  * @param EFFECT The class representing one-time events (side effects) emitted by the ViewModel.
@@ -51,6 +59,70 @@ abstract class MviViewModel<STATE : Any, EFFECT : Any>(
      * - Exactly one emission per event to a single active collector.
      */
     val effects: Flow<EFFECT> = _effects.receiveAsFlow()
+
+    @PublishedApi
+    internal val intentRegistry = IntentRegistry<Intent>()
+    private val middlewares = mutableListOf<IntentMiddleware>()
+
+    /**
+     * Registers a handler for a specific subtype [I] of [Intent].
+     *
+     * Registrations should be performed during ViewModel initialization.
+     *
+     * @param I The reified type of the intent to register.
+     * @param handler The suspending block invoked when intent [I] is dispatched.
+     */
+    protected inline fun <reified I : Intent> intent(
+        noinline handler: suspend (I) -> Unit
+    ) {
+        intentRegistry.register(I::class, handler)
+    }
+
+    /**
+     * Adds an [IntentMiddleware] interceptor to the dispatch execution pipeline.
+     *
+     * @param middleware The middleware to register.
+     */
+    fun addMiddleware(middleware: IntentMiddleware) {
+        middlewares.add(middleware)
+    }
+
+    /**
+     * Dispatches the given [intent] to this ViewModel.
+     *
+     * Execution runs sequentially inside [viewModelScope] (defaulting to [Dispatchers.Main]).
+     * It runs the middleware pipeline followed by the final registered intent handler.
+     * Uncaught errors are intercepted, reported to diagnostic observers, and routed to [onError].
+     *
+     * @param intent The user intent to execute.
+     */
+    fun dispatch(intent: Intent) {
+        launchIntent {
+            MviKitDiagnostics.notifyIntentReceived(intent)
+            try {
+                executeChain(intent, 0)
+                MviKitDiagnostics.notifyIntentCompleted(intent)
+            } catch (t: Throwable) {
+                MviKitDiagnostics.notifyIntentFailed(intent, t)
+                throw t // Propagate to let launchIntent handle via CoroutineExceptionHandler
+            }
+        }
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private suspend fun executeChain(intent: Intent, index: Int) {
+        if (index < middlewares.size) {
+            middlewares[index].intercept(intent) {
+                executeChain(intent, index + 1)
+            }
+        } else {
+            val handler = intentRegistry.getHandler(intent::class)
+            requireNotNull(handler) {
+                "No handler registered for intent type: ${intent::class.qualifiedName ?: intent::class.simpleName}"
+            }
+            (handler as IntentHandler<Intent>)(intent)
+        }
+    }
 
     /**
      * Updates the UI state atomically by applying the [reducer] block.

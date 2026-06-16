@@ -7,6 +7,8 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
+import io.mvikit.core.MviViewModel
+import io.mvikit.core.intent.Intent
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collect
@@ -56,4 +58,15 @@ fun <EFFECT> CollectEffects(
             }
         }
     }
+}
+
+/**
+ * Dispatches the given [intent] to this [MviViewModel].
+ *
+ * This provides a convenient wrapper to dispatch intents from Compose event handlers.
+ *
+ * @param intent The user intent to dispatch.
+ */
+fun MviViewModel<*, *>.dispatchIntent(intent: Intent) {
+    this.dispatch(intent)
 }

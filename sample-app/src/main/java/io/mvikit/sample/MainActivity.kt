@@ -53,6 +53,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import io.mvikit.compose.CollectEffects
 import io.mvikit.compose.collectState
+import io.mvikit.compose.dispatchIntent
 import io.mvikit.sample.ui.theme.MVIKitSampleAppTheme
 
 class MainActivity : ComponentActivity() {
@@ -196,7 +197,7 @@ fun CounterScreen(
             ) {
                 // Decrement Button
                 Button(
-                    onClick = { viewModel.decrement() },
+                    onClick = { viewModel.dispatch(CounterIntent.Decrement) },
                     modifier = Modifier
                         .weight(1f)
                         .height(56.dp),
@@ -211,7 +212,7 @@ fun CounterScreen(
 
                 // Increment Button
                 Button(
-                    onClick = { viewModel.increment() },
+                    onClick = { viewModel.dispatch(CounterIntent.Increment) },
                     modifier = Modifier
                         .weight(1f)
                         .height(56.dp),
@@ -229,7 +230,7 @@ fun CounterScreen(
 
             // Reset Button
             OutlinedButton(
-                onClick = { viewModel.reset() },
+                onClick = { viewModel.dispatchIntent(CounterIntent.Reset) },
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(50.dp),
@@ -288,7 +289,7 @@ fun CounterScreen(
             Spacer(modifier = Modifier.height(12.dp))
 
             Button(
-                onClick = { viewModel.showToast(toastMessageInput) },
+                onClick = { viewModel.dispatch(CounterIntent.ShowToast(toastMessageInput)) },
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(50.dp),
