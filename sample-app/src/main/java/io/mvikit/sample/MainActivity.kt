@@ -30,6 +30,7 @@ class MainActivity : ComponentActivity() {
                 val graph = remember {
                     navigationGraph(LoginScreen()) {
                         registerAllGeneratedScreens(navigator)
+                        initializeViewTreeOwners()
                     }
                 }
 

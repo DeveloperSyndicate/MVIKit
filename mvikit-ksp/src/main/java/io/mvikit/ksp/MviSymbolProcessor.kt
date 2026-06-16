@@ -735,7 +735,16 @@ class MviSymbolProcessor(
         if (allScreens.isEmpty()) return
 
         // Generate Navigation Registry
-        val file = createNewFileSafe(Dependencies(false), "io.mvikit.generated.navigation", "GeneratedNavigationRegistry") ?: return
+        val sourceFiles = allScreens.values
+            .mapNotNull { it.symbol.containingFile }
+            .toSet()
+            .toTypedArray()
+
+        val file = createNewFileSafe(
+            Dependencies(aggregating = true, *sourceFiles),
+            "io.mvikit.generated.navigation",
+            "GeneratedNavigationRegistry"
+        ) ?: return
         PrintWriter(OutputStreamWriter(file, "UTF-8")).use { out ->
             out.println("package io.mvikit.generated.navigation")
             out.println()

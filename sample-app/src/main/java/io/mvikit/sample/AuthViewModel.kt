@@ -7,9 +7,9 @@ import io.mvikit.annotations.MviViewModel
 @MviViewModel
 class AuthViewModel {
     @IntentHandler
-    fun updateEmail(email: String) {
+    fun updatePhone(phone: String) {
         updateState {
-            this.email  = email
+            this.phone  = phone
         }
     }
     @IntentHandler

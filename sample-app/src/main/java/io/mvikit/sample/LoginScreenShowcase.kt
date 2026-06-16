@@ -36,6 +36,9 @@ class LoginScreen : Screen
 @Destination
 object HomeScreen : Screen
 
+@Destination
+object AuthScreen: Screen
+
 @Composable
 fun HomeScreenView(navigator: Navigator) {
     Box(
@@ -261,7 +264,10 @@ fun LoginScreenView(
 
             // Submit Button
             Button(
-                onClick = { viewModel.loginAsync() },
+                onClick = {
+                /*viewModel.loginAsync() */
+                    navigator.navigate(AuthScreen)
+                },
                 enabled = !state.isLoading,
                 shape = RoundedCornerShape(12.dp),
                 colors = ButtonDefaults.buttonColors(
