@@ -3,6 +3,7 @@ package io.mvikit.compose
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
+import androidx.compose.runtime.getValue
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -69,4 +70,19 @@ fun <EFFECT> CollectEffects(
  */
 fun MviViewModel<*, *>.dispatchIntent(intent: Intent) {
     this.dispatch(intent)
+}
+
+/**
+ * Observes whether an action with the specified [key] is currently executing.
+ *
+ * This uses a lifecycle-aware collection under the hood to ensure recompositions
+ * are safe and performant.
+ *
+ * @param key The action key (or loadingKey) to observe.
+ * @return True if the action is currently running, false otherwise.
+ */
+@Composable
+fun MviViewModel<*, *>.rememberActionState(key: String): Boolean {
+    val state by collectState(this.actionState)
+    return state.runningActions.contains(key)
 }

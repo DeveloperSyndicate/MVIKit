@@ -43,7 +43,7 @@ graph TD
   * **Single Emission**: Exactly one collector consumes each effect, preventing duplicate event execution.
 
 ### Structured Concurrency & Coroutines
-* `launchIntent` executes asynchronous work in the `viewModelScope`.
+* `launchIntent` executes asynchronous work in the [viewModelScope](file:///Users/sanjay/Documents/VibeCode/MVIKitSampleApp/mvikit-core/src/main/java/io/mvikit/core/MviViewModel.kt).
 * **SupervisorJob Integration**: Because `viewModelScope` uses `SupervisorJob` by default under the hood, if one launched intent fails (e.g. throws a network exception), it does not cancel the parent scope or other sibling intents.
 * **Uncaught Exception Routing**: An internal `CoroutineExceptionHandler` intercepts uncaught exceptions within `launchIntent` blocks, routing them directly to `onError(throwable)`. This provides a global error handling boundary for the ViewModel.
 
@@ -102,57 +102,114 @@ Observers are registered globally at `MviKitDiagnostics.addObserver()`. Each dis
 
 ---
 
-## 6. Jetpack Compose Integration
+## 6. Async Actions Execution Engine (Phase 3)
 
-MVIKit provides lifecycle-aware Compose bindings to ensure optimal performance and resources safety:
+Phase 3 introduces first-class **Asynchronous Action Execution** (`execute`) designed to eliminate boilerplate surrounding network requests, operations state tracking, and error handling pipelines.
 
-* `collectState(StateFlow)`: Automatically gathers StateFlow emissions using `collectAsStateWithLifecycle()`. This stops flow collection when the Composable is invisible (e.g., app in background), conserving CPU and battery life.
-* `CollectEffects(Flow, (EFFECT) -> Unit)`: Collections are scoped to a `LaunchedEffect` and use `repeatOnLifecycle(Lifecycle.State.STARTED)` under the hood. It ensures side-effects are only processed when the UI is actively in the foreground, avoiding background action execution or state leaks.
-* `MviViewModel.dispatchIntent(Intent)`: A Composable-friendly extension function allowing clean intent dispatching from Compose event handlers.
+```kotlin
+protected fun <T> execute(
+    key: String = java.util.UUID.randomUUID().toString(),
+    request: suspend () -> T,
+    onSuccess: suspend (T) -> Unit,
+    onFailure: (suspend (Throwable) -> Unit)? = null,
+    onFinally: (suspend () -> Unit)? = null,
+    policy: DuplicateActionPolicy = DuplicateActionPolicy.ALLOW,
+    retries: Int = 0,
+    retryDelayMillis: Long = 0,
+    exponentialBackoff: Boolean = false,
+    loadingKey: String? = null
+)
+```
+
+### Key Execution Capabilities
+* **Automatic Loading State**: Active actions are automatically tracked by key in `actionState`. This can be observed from the UI using the Compose `viewModel.rememberActionState("key")` helper.
+* **Error Pipeline**: Handled errors are directed to `onFailure`. Unhandled errors (when `onFailure` is omitted) route directly to the ViewModel's global `onError()`.
+* **Retry Engine**: Retries only occur on failure, utilizing configurable initial delays and optional exponential backoffs (e.g. 1s -> 2s -> 4s). It preserves standard coroutines cancellation semantics.
+* **Duplicate Action Policies**: Defines the strategy when duplicate execution requests are triggered for the same key:
+  - `ALLOW`: Runs concurrently.
+  - `IGNORE`: Ignores the new request if the previous one is still executing.
+  - `CANCEL_PREVIOUS`: Cancels and waits for the previous job to finish cleaning up before starting.
+  - `RESTART`: Cancels the previous job immediately and starts the new one.
+* **Cancellation**: Individual actions can be terminated immediately using `cancelAction(key)`, and all active processes can be aborted via `cancelAllActions()`.
 
 ---
 
-## 7. Phase 1 to Phase 2 Migration Guide
+## 7. State Transactions (Phase 3)
 
-Upgrading a codebase from Phase 1 to Phase 2 of MVIKit is straightforward and preserves state/effect signatures.
+In standard MVI, triggering multiple sequential reductions emits multiple intermediate states, causing duplicate recompositions. MVIKit introduces atomic **State Transactions**:
 
-### Step 1: Define Intent Contracts
-Create an `Intent` class or sealed interface for all actions on a screen:
 ```kotlin
-// Phase 2
-sealed interface CounterIntent : Intent {
-    data object Increment : CounterIntent
-    data object Decrement : CounterIntent
+transaction {
+    update { copy(isLoading = true) }
+    update { copy(errorMessage = null) }
 }
 ```
 
-### Step 2: Update the ViewModel
-1. Remove explicit public functions representing actions.
-2. Register handlers for each intent inside the `init` block using `intent<I> { ... }`:
-```kotlin
-// Phase 1 ViewModel
-class CounterViewModel : MviViewModel<CounterState, CounterEffect>(...) {
-    fun increment() {
-        reduce { copy(count = count + 1) }
-    }
-}
+* **Batching**: Updates run sequentially on an intermediate `TransactionScope`.
+* **Single Emission**: The final state is applied back to the `StateFlow` exactly once, guaranteeing atomic updates and preventing intermediate recompositions in Compose.
 
-// Phase 2 ViewModel
-class CounterViewModel : MviViewModel<CounterState, CounterEffect>(...) {
-    init {
-        intent<CounterIntent.Increment> {
-            reduce { copy(count = count + 1) }
+---
+
+## 8. Diagnostics Action Observers (Phase 3)
+
+Similar to intent observers, asynchronous action lifecycles can be monitored globally:
+```kotlin
+interface ActionObserver {
+    fun onStarted(key: String)
+    fun onSuccess(key: String)
+    fun onFailure(key: String, throwable: Throwable)
+    fun onCancelled(key: String)
+}
+```
+Register observers at `MviKitActionDiagnostics.addObserver()` to capture start, success, failure, and cancellation telemetry.
+
+---
+
+## 9. Phase 2 to Phase 3 Migration Guide
+
+Upgrading to Phase 3 introduces helper APIs that replace boilerplate loading variables and error loops.
+
+### Step 1: Migrate Loading State & Asynchronous Execution
+Replace manual `launchIntent` blocks containing loading toggles and try-catch blocks with the `execute` API:
+
+```kotlin
+// Phase 2 (Manual)
+intent<LoginIntent.Submit> {
+    reduce { copy(isLoading = true) }
+    launchIntent {
+        try {
+            val result = api.login(...)
+            effect(Success(result))
+        } catch (t: Throwable) {
+            onError(t)
+        } finally {
+            reduce { copy(isLoading = false) }
         }
     }
 }
+
+// Phase 3 (Automated)
+intent<LoginIntent.Submit> {
+    execute(
+        key = "login",
+        request = { api.login(...) },
+        onSuccess = { result -> effect(Success(result)) }
+    )
+}
 ```
+*Observe the loading state in Compose UI directly using `val isLoggingIn = viewModel.rememberActionState("login")`.*
 
-### Step 3: Update Compose Views
-Replace direct ViewModel function calls in click listeners with `dispatch(intent)` or `dispatchIntent(intent)`:
+### Step 2: Batch Sequential Reductions
+Group sequential `reduce` calls into a single `transaction` block to guarantee atomic updates and optimize recomposition cycles:
+
 ```kotlin
-// Phase 1 View
-Button(onClick = { viewModel.increment() }) { ... }
+// Phase 2
+reduce { copy(email = "test@email.com") }
+reduce { copy(errorMessage = null) }
 
-// Phase 2 View
-Button(onClick = { viewModel.dispatch(CounterIntent.Increment) }) { ... }
+// Phase 3
+transaction {
+    update { copy(email = "test@email.com") }
+    update { copy(errorMessage = null) }
+}
 ```

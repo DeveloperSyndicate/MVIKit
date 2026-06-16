@@ -2,16 +2,24 @@ package io.mvikit.core
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import io.mvikit.core.action.ActionState
+import io.mvikit.core.action.DuplicateActionPolicy
+import io.mvikit.core.action.MviKitActionDiagnostics
+import io.mvikit.core.action.TransactionScope
 import io.mvikit.core.intent.Intent
 import io.mvikit.core.intent.IntentHandler
 import io.mvikit.core.intent.IntentMiddleware
 import io.mvikit.core.intent.IntentRegistry
 import io.mvikit.core.intent.MviKitDiagnostics
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -26,16 +34,9 @@ import kotlinx.coroutines.launch
  * MviViewModel maintains a single source of truth for the UI [state] and supports sending one-time
  * side [effects] (such as navigation or toasts) to the view.
  *
- * State updates are performed using the [reduce] API, which guarantees thread safety and atomicity.
- * Asynchronous work and actions are launched via the [launchIntent] Coroutine API, which automatically
- * handles errors and routes them to [onError].
- *
- * Handlers for strongly typed [Intent]s can be registered using the [intent] builder inside initialization
- * blocks, and user actions can be dispatched using the [dispatch] API.
- *
- * @param STATE The immutable class representing the state of the UI.
- * @param EFFECT The class representing one-time events (side effects) emitted by the ViewModel.
- * @constructor Creates an instance of [MviViewModel] with the specified [initialState].
+ * State updates are performed using the [reduce] API or atomically in batches using [transaction].
+ * Asynchronous work is executed via [execute], providing automatic retries, cancellation management,
+ * duplicate handling, and loading state tracking in [actionState].
  */
 abstract class MviViewModel<STATE : Any, EFFECT : Any>(
     initialState: STATE
@@ -52,11 +53,6 @@ abstract class MviViewModel<STATE : Any, EFFECT : Any>(
 
     /**
      * Exposes the read-only [Flow] of one-time side effects.
-     *
-     * Side effects are collected from a buffered channel, guaranteeing:
-     * - Events do not replay to new or restarted collectors.
-     * - Events survive collector restarts (e.g. configuration changes) while pending in the buffer.
-     * - Exactly one emission per event to a single active collector.
      */
     val effects: Flow<EFFECT> = _effects.receiveAsFlow()
 
@@ -64,13 +60,18 @@ abstract class MviViewModel<STATE : Any, EFFECT : Any>(
     internal val intentRegistry = IntentRegistry<Intent>()
     private val middlewares = mutableListOf<IntentMiddleware>()
 
+    // Phase 3 action execution tracking
+    private val _actionState = MutableStateFlow(ActionState())
+
+    /**
+     * Exposes the read-only [StateFlow] representing the active asynchronous operations.
+     */
+    val actionState: StateFlow<ActionState> = _actionState.asStateFlow()
+
+    private val runningJobs = ConcurrentHashMap<String, Job>()
+
     /**
      * Registers a handler for a specific subtype [I] of [Intent].
-     *
-     * Registrations should be performed during ViewModel initialization.
-     *
-     * @param I The reified type of the intent to register.
-     * @param handler The suspending block invoked when intent [I] is dispatched.
      */
     protected inline fun <reified I : Intent> intent(
         noinline handler: suspend (I) -> Unit
@@ -80,8 +81,6 @@ abstract class MviViewModel<STATE : Any, EFFECT : Any>(
 
     /**
      * Adds an [IntentMiddleware] interceptor to the dispatch execution pipeline.
-     *
-     * @param middleware The middleware to register.
      */
     fun addMiddleware(middleware: IntentMiddleware) {
         middlewares.add(middleware)
@@ -89,12 +88,6 @@ abstract class MviViewModel<STATE : Any, EFFECT : Any>(
 
     /**
      * Dispatches the given [intent] to this ViewModel.
-     *
-     * Execution runs sequentially inside [viewModelScope] (defaulting to [Dispatchers.Main]).
-     * It runs the middleware pipeline followed by the final registered intent handler.
-     * Uncaught errors are intercepted, reported to diagnostic observers, and routed to [onError].
-     *
-     * @param intent The user intent to execute.
      */
     fun dispatch(intent: Intent) {
         launchIntent {
@@ -104,7 +97,7 @@ abstract class MviViewModel<STATE : Any, EFFECT : Any>(
                 MviKitDiagnostics.notifyIntentCompleted(intent)
             } catch (t: Throwable) {
                 MviKitDiagnostics.notifyIntentFailed(intent, t)
-                throw t // Propagate to let launchIntent handle via CoroutineExceptionHandler
+                throw t
             }
         }
     }
@@ -126,11 +119,6 @@ abstract class MviViewModel<STATE : Any, EFFECT : Any>(
 
     /**
      * Updates the UI state atomically by applying the [reducer] block.
-     *
-     * This function is thread-safe and non-blocking, utilizing [MutableStateFlow.update]
-     * to safely modify the state even if called from multiple background threads.
-     *
-     * @param reducer A lambda that receives the current [STATE] as its receiver and returns the next [STATE].
      */
     protected fun reduce(reducer: STATE.() -> STATE) {
         _state.update { currentState ->
@@ -139,26 +127,182 @@ abstract class MviViewModel<STATE : Any, EFFECT : Any>(
     }
 
     /**
+     * Executes multiple state updates atomically, emitting exactly one final state change
+     * and preventing intermediate recompositions.
+     *
+     * @param block A lambda executed within [TransactionScope] context.
+     */
+    protected fun transaction(block: TransactionScope<STATE>.() -> Unit) {
+        _state.update { currentState ->
+            val scope = TransactionScope(currentState)
+            scope.block()
+            scope.currentState
+        }
+    }
+
+    /**
+     * Executes a suspending asynchronous request block in [viewModelScope] with full lifecycle management.
+     *
+     * @param key Unique key to identify and track the action. Defaults to a random UUID.
+     * @param request The suspending block performing the actual request.
+     * @param onSuccess Callback executed when the request completes successfully.
+     * @param onFailure Callback executed when the request fails. If null, errors route to [onError].
+     * @param onFinally Callback executed when the execution completes (successfully, cancelled, or failed).
+     * @param policy Strategy to resolve duplicate executions for the same action [key].
+     * @param retries Number of times to retry execution on failure.
+     * @param retryDelayMillis Initial wait time before retry.
+     * @param exponentialBackoff Double the wait time on subsequent retry attempts.
+     * @param loadingKey Optional key tracked in [actionState] running actions. Defaults to [key].
+     */
+    protected fun <T> execute(
+        key: String = java.util.UUID.randomUUID().toString(),
+        request: suspend () -> T,
+        onSuccess: suspend (T) -> Unit,
+        onFailure: (suspend (Throwable) -> Unit)? = null,
+        onFinally: (suspend () -> Unit)? = null,
+        policy: DuplicateActionPolicy = DuplicateActionPolicy.ALLOW,
+        retries: Int = 0,
+        retryDelayMillis: Long = 0,
+        exponentialBackoff: Boolean = false,
+        loadingKey: String? = null
+    ) {
+        // IGNORE policy: return immediately if a duplicate is already running
+        val previousJob = runningJobs[key]
+
+        // IGNORE policy: return immediately if a duplicate is already running
+        if (policy == DuplicateActionPolicy.IGNORE && previousJob?.isActive == true) {
+            return
+        }
+
+        val job = viewModelScope.launch {
+            // CANCEL_PREVIOUS: cancel and wait for the old job to finish completely
+            if (policy == DuplicateActionPolicy.CANCEL_PREVIOUS) {
+                if (previousJob != null && previousJob.isActive) {
+                    previousJob.cancelAndJoin()
+                }
+            }
+
+
+            val actualLoadingKey = loadingKey ?: key
+            trackActionStarted(key, actualLoadingKey)
+            MviKitActionDiagnostics.notifyStarted(key)
+
+            try {
+                val result = executeWithRetry(
+                    retries = retries,
+                    retryDelayMillis = retryDelayMillis,
+                    exponentialBackoff = exponentialBackoff,
+                    request = request
+                )
+                onSuccess(result)
+                MviKitActionDiagnostics.notifySuccess(key)
+            } catch (t: Throwable) {
+                if (t is kotlinx.coroutines.CancellationException) {
+                    MviKitActionDiagnostics.notifyCancelled(key)
+                } else {
+                    MviKitActionDiagnostics.notifyFailure(key, t)
+                    if (onFailure != null) {
+                        try {
+                            onFailure(t)
+                        } catch (callbackError: Throwable) {
+                            onError(callbackError)
+                        }
+                    } else {
+                        onError(t)
+                    }
+                }
+            } finally {
+                trackActionFinished(key, actualLoadingKey)
+                onFinally?.invoke()
+            }
+        }
+
+        // RESTART policy: cancel the previous job immediately without waiting
+        if (policy == DuplicateActionPolicy.RESTART) {
+            runningJobs[key]?.cancel()
+        }
+
+        runningJobs[key] = job
+    }
+
+    private suspend fun <T> executeWithRetry(
+        retries: Int,
+        retryDelayMillis: Long,
+        exponentialBackoff: Boolean,
+        request: suspend () -> T
+    ): T {
+        var attempts = 0
+        var currentDelay = retryDelayMillis
+        while (true) {
+            try {
+                return request()
+            } catch (t: Throwable) {
+                if (t is kotlinx.coroutines.CancellationException) {
+                    throw t
+                }
+                attempts++
+                if (attempts > retries) {
+                    throw t
+                }
+                delay(currentDelay)
+                if (exponentialBackoff) {
+                    currentDelay *= 2
+                }
+            }
+        }
+    }
+
+    private fun trackActionStarted(key: String, loadingKey: String) {
+        _actionState.update { current ->
+            val updatedActions = current.runningActions + loadingKey
+            current.copy(
+                loading = true,
+                runningActions = updatedActions
+            )
+        }
+    }
+
+    private fun trackActionFinished(key: String, loadingKey: String) {
+        runningJobs.remove(key)
+        _actionState.update { current ->
+            val updatedActions = current.runningActions - loadingKey
+            current.copy(
+                loading = updatedActions.isNotEmpty(),
+                runningActions = updatedActions
+            )
+        }
+    }
+
+    /**
+     * Checks if an action with the specified [loadingKey] is currently executing.
+     */
+    fun isActionRunning(loadingKey: String): Boolean {
+        return _actionState.value.runningActions.contains(loadingKey)
+    }
+
+    /**
+     * Cancels the currently executing action associated with the specified [key].
+     */
+    fun cancelAction(key: String) {
+        runningJobs[key]?.cancel()
+    }
+
+    /**
+     * Cancels all currently executing actions tracked by this ViewModel.
+     */
+    fun cancelAllActions() {
+        runningJobs.values.forEach { it.cancel() }
+    }
+
+    /**
      * Emits a one-time side [effect] to be handled by the view.
-     *
-     * This is a suspending function. If the side-effects buffer is full, it suspends until
-     * there is room or an active collector processes the elements.
-     *
-     * @param effect The side effect to emit.
      */
     protected suspend fun effect(effect: EFFECT) {
         _effects.send(effect)
     }
 
     /**
-     * Launches a coroutine inside the [viewModelScope] to execute asynchronous work (an "intent").
-     *
-     * Any uncaught exceptions thrown during the execution of this coroutine will be caught
-     * by a [CoroutineExceptionHandler] and routed to the [onError] callback. This prevents
-     * uncaught crashes while letting developers handle exceptions globally or individually.
-     *
-     * @param dispatcher The [CoroutineDispatcher] to run the coroutine on. Defaults to [Dispatchers.Main].
-     * @param block The suspend block representing the asynchronous intent.
+     * Launches a coroutine inside the [viewModelScope] to execute asynchronous work.
      */
     protected fun launchIntent(
         dispatcher: CoroutineDispatcher = Dispatchers.Main,
@@ -171,13 +315,7 @@ abstract class MviViewModel<STATE : Any, EFFECT : Any>(
     }
 
     /**
-     * Callback invoked when an uncaught exception is thrown inside a coroutine launched via [launchIntent].
-     *
-     * The default implementation prints the stacktrace of the exception. ViewModels can override
-     * this method to implement custom error-handling logic, analytics logging, or to trigger
-     * user-facing error side effects.
-     *
-     * @param throwable The uncaught exception.
+     * Callback invoked when an uncaught exception is thrown inside a coroutine.
      */
     protected open fun onError(throwable: Throwable) {
         throwable.printStackTrace()
