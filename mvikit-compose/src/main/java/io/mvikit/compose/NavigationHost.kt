@@ -1,6 +1,7 @@
 package io.mvikit.compose
 
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
@@ -91,6 +92,11 @@ fun MviKitNavigationHost(
 ) {
     val context = LocalContext.current
     val backStack by collectState(navigator.backStack)
+
+    // Intercept system backpress if there is more than 1 screen in the backstack
+    BackHandler(enabled = backStack.size > 1) {
+        navigator.pop()
+    }
 
     // Snackbar UI container state
     val snackbarHostState = remember { SnackbarHostState() }
