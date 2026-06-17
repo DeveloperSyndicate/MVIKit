@@ -15,4 +15,8 @@ object MviViewModelRegistry {
             "Ensure you instantiate it using rememberViewModel."
         )
     }
+
+    fun getActiveWrappers(): Collection<ViewModel<*, *>> {
+        return registry.values
+    }
 }

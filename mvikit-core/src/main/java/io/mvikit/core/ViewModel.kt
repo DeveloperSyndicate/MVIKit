@@ -101,12 +101,12 @@ abstract class ViewModel<STATE : Any, EFFECT : Any>(
     }
 
     private suspend fun processIntentSequential(intent: Intent) {
-        MviKitDiagnostics.notifyIntentReceived(intent)
+        MviKitDiagnostics.notifyIntentReceived(this@ViewModel, intent)
         try {
             executeChain(intent, 0)
-            MviKitDiagnostics.notifyIntentCompleted(intent)
+            MviKitDiagnostics.notifyIntentCompleted(this@ViewModel, intent)
         } catch (t: Throwable) {
-            MviKitDiagnostics.notifyIntentFailed(intent, t)
+            MviKitDiagnostics.notifyIntentFailed(this@ViewModel, intent, t)
             onError(t)
         }
     }
@@ -153,12 +153,12 @@ abstract class ViewModel<STATE : Any, EFFECT : Any>(
 
     private fun runConcurrentIntent(intent: Intent) {
         val block: suspend () -> Unit = {
-            MviKitDiagnostics.notifyIntentReceived(intent)
+            MviKitDiagnostics.notifyIntentReceived(this@ViewModel, intent)
             try {
                 executeChain(intent, 0)
-                MviKitDiagnostics.notifyIntentCompleted(intent)
+                MviKitDiagnostics.notifyIntentCompleted(this@ViewModel, intent)
             } catch (t: Throwable) {
-                MviKitDiagnostics.notifyIntentFailed(intent, t)
+                MviKitDiagnostics.notifyIntentFailed(this@ViewModel, intent, t)
                 throw t
             }
         }
@@ -214,6 +214,14 @@ abstract class ViewModel<STATE : Any, EFFECT : Any>(
         _state.update { currentState ->
             currentState.reducer()
         }
+    }
+
+    /**
+     * Overrides the current UI state. Used for testing and time-travel debugging.
+     */
+    @Suppress("UNCHECKED_CAST")
+    fun overrideState(newState: Any) {
+        _state.value = newState as STATE
     }
 
     /**

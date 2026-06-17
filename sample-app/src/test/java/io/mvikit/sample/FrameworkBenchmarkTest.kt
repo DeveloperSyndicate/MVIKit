@@ -313,9 +313,9 @@ class FrameworkBenchmarkTest {
     @Test
     fun testDiagnosticsObserverWeakReferenceLeak() {
         var observer: IntentObserver? = object : IntentObserver {
-            override fun onIntentReceived(intent: Intent) {}
-            override fun onIntentCompleted(intent: Intent) {}
-            override fun onIntentFailed(intent: Intent, throwable: Throwable) {}
+            override fun onIntentReceived(viewModel: ViewModel<*, *>, intent: Intent) {}
+            override fun onIntentCompleted(viewModel: ViewModel<*, *>, intent: Intent) {}
+            override fun onIntentFailed(viewModel: ViewModel<*, *>, intent: Intent, throwable: Throwable) {}
         }
         val weakRef = WeakReference(observer)
 

@@ -1,6 +1,7 @@
 package io.mvikit.core.intent
 
 import java.util.concurrent.CopyOnWriteArrayList
+import io.mvikit.core.ViewModel
 
 /**
  * Interface defining lifecycle hooks for dispatched [Intent]s.
@@ -11,17 +12,17 @@ interface IntentObserver {
     /**
      * Invoked immediately when an intent is dispatched to a ViewModel.
      */
-    fun onIntentReceived(intent: Intent)
+    fun onIntentReceived(viewModel: ViewModel<*, *>, intent: Intent)
 
     /**
      * Invoked when the intent's handler and middleware chain complete successfully.
      */
-    fun onIntentCompleted(intent: Intent)
+    fun onIntentCompleted(viewModel: ViewModel<*, *>, intent: Intent)
 
     /**
      * Invoked when the intent execution fails with an exception.
      */
-    fun onIntentFailed(intent: Intent, throwable: Throwable)
+    fun onIntentFailed(viewModel: ViewModel<*, *>, intent: Intent, throwable: Throwable)
 }
 
 /**
@@ -58,21 +59,21 @@ object MviKitDiagnostics {
         return observers.isNotEmpty()
     }
 
-    internal fun notifyIntentReceived(intent: Intent) {
+    internal fun notifyIntentReceived(viewModel: ViewModel<*, *>, intent: Intent) {
         if (observers.isNotEmpty()) {
-            observers.forEach { it.onIntentReceived(intent) }
+            observers.forEach { it.onIntentReceived(viewModel, intent) }
         }
     }
 
-    internal fun notifyIntentCompleted(intent: Intent) {
+    internal fun notifyIntentCompleted(viewModel: ViewModel<*, *>, intent: Intent) {
         if (observers.isNotEmpty()) {
-            observers.forEach { it.onIntentCompleted(intent) }
+            observers.forEach { it.onIntentCompleted(viewModel, intent) }
         }
     }
 
-    internal fun notifyIntentFailed(intent: Intent, throwable: Throwable) {
+    internal fun notifyIntentFailed(viewModel: ViewModel<*, *>, intent: Intent, throwable: Throwable) {
         if (observers.isNotEmpty()) {
-            observers.forEach { it.onIntentFailed(intent, throwable) }
+            observers.forEach { it.onIntentFailed(viewModel, intent, throwable) }
         }
     }
 }

@@ -163,15 +163,15 @@ class MviIntentTest {
         val diagnosticEvents = mutableListOf<String>()
 
         val observer = object : IntentObserver {
-            override fun onIntentReceived(intent: Intent) {
+            override fun onIntentReceived(viewModel: ViewModel<*, *>, intent: Intent) {
                 diagnosticEvents.add("received:${intent::class.java.simpleName}")
             }
 
-            override fun onIntentCompleted(intent: Intent) {
+            override fun onIntentCompleted(viewModel: ViewModel<*, *>, intent: Intent) {
                 diagnosticEvents.add("completed:${intent::class.java.simpleName}")
             }
 
-            override fun onIntentFailed(intent: Intent, throwable: Throwable) {
+            override fun onIntentFailed(viewModel: ViewModel<*, *>, intent: Intent, throwable: Throwable) {
                 diagnosticEvents.add("failed:${intent::class.java.simpleName}")
             }
         }
@@ -190,15 +190,15 @@ class MviIntentTest {
         val diagnosticEvents = mutableListOf<String>()
 
         val observer = object : IntentObserver {
-            override fun onIntentReceived(intent: Intent) {
+            override fun onIntentReceived(viewModel: ViewModel<*, *>, intent: Intent) {
                 diagnosticEvents.add("received:${intent::class.java.simpleName}")
             }
 
-            override fun onIntentCompleted(intent: Intent) {
+            override fun onIntentCompleted(viewModel: ViewModel<*, *>, intent: Intent) {
                 diagnosticEvents.add("completed:${intent::class.java.simpleName}")
             }
 
-            override fun onIntentFailed(intent: Intent, throwable: Throwable) {
+            override fun onIntentFailed(viewModel: ViewModel<*, *>, intent: Intent, throwable: Throwable) {
                 diagnosticEvents.add("failed:${intent::class.java.simpleName}:${throwable.message}")
             }
         }
