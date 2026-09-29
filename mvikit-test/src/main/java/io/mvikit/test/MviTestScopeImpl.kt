@@ -76,12 +76,16 @@ internal class MviTestScopeImpl<STATE : Any, EFFECT : Any>(
         return actual
     }
 
+    override suspend fun expectState(predicate: (STATE) -> Boolean): STATE {
+        return expectState(defaultTimeout, "condition", predicate)
+    }
+
     override suspend fun expectState(
-        timeout: Duration?,
+        timeout: Duration,
         description: String,
         predicate: (STATE) -> Boolean
     ): STATE {
-        val actual = awaitNextState(timeout ?: defaultTimeout)
+        val actual = awaitNextState(timeout)
         if (!predicate(actual)) {
             fail(
                 """
@@ -108,27 +112,29 @@ internal class MviTestScopeImpl<STATE : Any, EFFECT : Any>(
     }
 
     @Suppress("UNCHECKED_CAST")
-    override suspend fun <reified E : EFFECT> expectEffect(
+    override suspend fun <E : Any> expectEffectOfType(
+        clazz: kotlin.reflect.KClass<E>,
         timeout: Duration?,
         predicate: (E) -> Boolean
     ): E {
         val actual = awaitNextEffect(timeout ?: defaultTimeout)
-        if (actual !is E) {
+        if (!clazz.isInstance(actual)) {
             fail(
                 """
-                |Expected effect of type ${E::class.qualifiedName ?: E::class.simpleName}, but received:
+                |Expected effect of type ${clazz.qualifiedName ?: clazz.simpleName}, but received:
                 |Actual: $actual (${actual::class.qualifiedName ?: actual::class.simpleName})
                 """.trimMargin()
             )
         }
-        if (!predicate(actual)) {
+        val casted = actual as E
+        if (!predicate(casted)) {
             fail(
                 """
                 |Effect predicate failed for effect: $actual
                 """.trimMargin()
             )
         }
-        return actual
+        return casted
     }
 
     override suspend fun expectNoMoreStates(timeout: Duration?) {

@@ -31,8 +31,13 @@ interface MviTestScope<STATE : Any, EFFECT : Any> {
     /**
      * Awaits and asserts that the next emitted state satisfies [predicate].
      */
+    suspend fun expectState(predicate: (STATE) -> Boolean): STATE
+
+    /**
+     * Awaits and asserts that the next emitted state satisfies [predicate] within [timeout].
+     */
     suspend fun expectState(
-        timeout: Duration? = null,
+        timeout: Duration,
         description: String = "condition",
         predicate: (STATE) -> Boolean
     ): STATE
@@ -43,9 +48,10 @@ interface MviTestScope<STATE : Any, EFFECT : Any> {
     suspend fun expectEffect(expected: EFFECT, timeout: Duration? = null): EFFECT
 
     /**
-     * Awaits and asserts that the next emitted side effect is of type [E] and satisfies [predicate].
+     * Awaits and asserts that the next emitted side effect is an instance of [clazz] and satisfies [predicate].
      */
-    suspend fun <reified E : EFFECT> expectEffect(
+    suspend fun <E : Any> expectEffectOfType(
+        clazz: kotlin.reflect.KClass<E>,
         timeout: Duration? = null,
         predicate: (E) -> Boolean = { true }
     ): E
@@ -65,3 +71,19 @@ interface MviTestScope<STATE : Any, EFFECT : Any> {
      */
     suspend fun expectNoMoreEvents()
 }
+
+/**
+ * Convenience inline extension allowing reified type assertion for side effects.
+ *
+ * Example:
+ * ```kotlin
+ * expectEffect<MyEffect.ShowToast> { it.message == "Success" }
+ * ```
+ */
+suspend inline fun <reified E : Any> MviTestScope<*, *>.expectEffect(
+    timeout: Duration? = null,
+    noinline predicate: (E) -> Boolean = { true }
+): E {
+    return expectEffectOfType(E::class, timeout, predicate)
+}
+
