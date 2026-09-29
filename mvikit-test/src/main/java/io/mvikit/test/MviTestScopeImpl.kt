@@ -163,22 +163,28 @@ internal class MviTestScopeImpl<STATE : Any, EFFECT : Any>(
     }
 
     private suspend fun awaitNextState(timeout: Duration): STATE {
-        return withTimeoutOrNull(timeout) {
+        val result = withTimeoutOrNull(timeout) {
             try {
                 stateQueue.receive()
             } catch (e: CancellationException) {
                 null
             }
-        } ?: fail("Timed out waiting for state after $timeout. Current state is: $currentState")
+        }
+        return result ?: fail("Timed out waiting for state after $timeout. Current state is: $currentState").let {
+            throw AssertionError("Timed out waiting for state")
+        }
     }
 
     private suspend fun awaitNextEffect(timeout: Duration): EFFECT {
-        return withTimeoutOrNull(timeout) {
+        val result = withTimeoutOrNull(timeout) {
             try {
                 effectQueue.receive()
             } catch (e: CancellationException) {
                 null
             }
-        } ?: fail("Timed out waiting for effect after $timeout.")
+        }
+        return result ?: fail("Timed out waiting for effect after $timeout.").let {
+            throw AssertionError("Timed out waiting for effect")
+        }
     }
 }

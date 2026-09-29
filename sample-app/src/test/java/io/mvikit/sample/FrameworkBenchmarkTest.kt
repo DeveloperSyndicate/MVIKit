@@ -24,7 +24,6 @@ import org.orbitmvi.orbit.ContainerHost
 import org.orbitmvi.orbit.container
 import org.orbitmvi.orbit.syntax.simple.intent
 import org.orbitmvi.orbit.syntax.simple.reduce
-import java.lang.management.ManagementFactory
 import io.mvikit.core.intent.IntentExecutionPolicy
 import io.mvikit.core.intent.MviKitDiagnostics
 import io.mvikit.core.intent.IntentObserver
@@ -162,41 +161,18 @@ class FrameworkBenchmarkTest {
         System.gc()
         Thread.sleep(100) // Stabilize GC
 
-        val threadMXBean = ManagementFactory.getThreadMXBean()
-        val isThreadAllocatedSupported = threadMXBean is com.sun.management.ThreadMXBean
-
-        val bytesBefore = if (isThreadAllocatedSupported) {
-            val bean = threadMXBean as com.sun.management.ThreadMXBean
-            var sum = 0L
-            for (id in bean.allThreadIds) {
-                val bytes = bean.getThreadAllocatedBytes(id)
-                if (bytes != -1L) sum += bytes
-            }
-            sum
-        } else {
-            Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()
-        }
+        val runtime = Runtime.getRuntime()
+        val bytesBefore = runtime.totalMemory() - runtime.freeMemory()
 
         val timeBefore = System.nanoTime()
         block()
         val timeAfter = System.nanoTime()
 
-        val bytesAfter = if (isThreadAllocatedSupported) {
-            val bean = threadMXBean as com.sun.management.ThreadMXBean
-            var sum = 0L
-            for (id in bean.allThreadIds) {
-                val bytes = bean.getThreadAllocatedBytes(id)
-                if (bytes != -1L) sum += bytes
-            }
-            sum
-        } else {
-            Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()
-        }
+        val bytesAfter = runtime.totalMemory() - runtime.freeMemory()
+        val memoryDelta = Math.max(0L, bytesAfter - bytesBefore)
+        val timeDeltaMs = (timeAfter - timeBefore) / 1_000_000
 
-        val durationNs = timeAfter - timeBefore
-        val allocatedBytes = bytesAfter - bytesBefore
-
-        return Pair(durationNs / 1_000_000, allocatedBytes) // ms, bytes
+        return Pair(timeDeltaMs, memoryDelta)
     }
 
     @Test

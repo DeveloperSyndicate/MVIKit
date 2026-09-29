@@ -29,6 +29,8 @@ android {
 
 dependencies {
     api(project(":mvikit-core"))
+    api(libs.androidx.lifecycle.viewmodel.ktx)
+    api(libs.androidx.core.ktx)
     api(libs.kotlinx.coroutines.test)
     api(libs.junit)
 
