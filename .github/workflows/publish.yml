@@ -30,16 +30,14 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Publish to Maven Central
-        run: ./gradlew publishToMavenCentral --no-configuration-cache
-        env:
-          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.GPG_PRIVATE_KEY }}
-          ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ secrets.GPG_KEY_ID }}
-          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.GPG_PASSWORD }}
-          ORG_GRADLE_PROJECT_signingKey: ${{ secrets.GPG_PRIVATE_KEY }}
-          ORG_GRADLE_PROJECT_signingKeyId: ${{ secrets.GPG_KEY_ID }}
-          ORG_GRADLE_PROJECT_signingPassword: ${{ secrets.GPG_PASSWORD }}
-          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
-          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+        run: |
+          # If the secret is base64 encoded, decode it, otherwise use as-is
+          CLEAN_KEY=$(echo "${{ secrets.GPG_PRIVATE_KEY }}" | base64 -d 2>/dev/null || echo "${{ secrets.GPG_PRIVATE_KEY }}")
+          export ORG_GRADLE_PROJECT_signingInMemoryKey="$CLEAN_KEY"
+          export ORG_GRADLE_PROJECT_signingInMemoryKeyPassword="${{ secrets.GPG_PASSWORD }}"
+          export ORG_GRADLE_PROJECT_mavenCentralUsername="${{ secrets.MAVEN_CENTRAL_USERNAME }}"
+          export ORG_GRADLE_PROJECT_mavenCentralPassword="${{ secrets.MAVEN_CENTRAL_PASSWORD }}"
+          ./gradlew publishToMavenCentral --no-configuration-cache
 
       - name: Extract Version and Release Notes
         id: release_info
