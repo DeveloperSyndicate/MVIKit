@@ -35,7 +35,11 @@ subprojects {
 
         configure<com.vanniktech.maven.publish.MavenPublishBaseExtension> {
             publishToMavenCentral(com.vanniktech.maven.publish.SonatypeHost.CENTRAL_PORTAL)
-            signAllPublications()
+            
+            val isReleaseOrCi = hasProperty("signing.keyId") || System.getenv("SIGNING_SECRET_KEY") != null
+            if (isReleaseOrCi) {
+                signAllPublications()
+            }
 
             coordinates(group.toString(), project.name, version.toString())
 

@@ -29,12 +29,12 @@ android {
 }
 
 dependencies {
-    implementation(libs.androidx.core.ktx)
-    implementation(libs.androidx.lifecycle.viewmodel.ktx)
-    implementation(libs.androidx.lifecycle.viewmodel.savedstate)
-    implementation(libs.androidx.lifecycle.runtime.ktx)
-    implementation(libs.kotlinx.coroutines.core)
-    implementation(libs.kotlinx.coroutines.android)
+    api(libs.androidx.core.ktx)
+    api(libs.androidx.lifecycle.viewmodel.ktx)
+    api(libs.androidx.lifecycle.viewmodel.savedstate)
+    api(libs.androidx.lifecycle.runtime.ktx)
+    api(libs.kotlinx.coroutines.core)
+    api(libs.kotlinx.coroutines.android)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)

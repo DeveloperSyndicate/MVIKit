@@ -33,15 +33,16 @@ android {
 }
 
 dependencies {
-    implementation(project(":mvikit-core"))
-    implementation(project(":mvikit-form"))
-    implementation(project(":mvikit-navigation"))
+    api(project(":mvikit-core"))
+    api(project(":mvikit-form"))
+    api(project(":mvikit-navigation"))
     implementation(platform(libs.androidx.compose.bom))
-    implementation(libs.androidx.compose.runtime)
-    implementation(libs.androidx.compose.ui)
-    implementation(libs.androidx.compose.material3)
-    implementation(libs.androidx.activity.compose)
-    implementation(libs.androidx.lifecycle.runtime.compose)
-    implementation(libs.androidx.lifecycle.viewmodel.ktx)
+    api(libs.androidx.compose.runtime)
+    api(libs.androidx.compose.ui)
+    api(libs.androidx.compose.material3)
+    api(libs.androidx.activity.compose)
+    api(libs.androidx.lifecycle.runtime.compose)
+    api(libs.androidx.lifecycle.viewmodel.compose)
+    api(libs.androidx.lifecycle.viewmodel.ktx)
     implementation(libs.androidx.core.ktx)
 }

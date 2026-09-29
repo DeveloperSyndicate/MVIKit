@@ -875,6 +875,15 @@ class MviSymbolProcessor(
                     .build()
             )
 
+            fileSpecBuilder.addFunction(
+                FunSpec.builder("dispatch")
+                    .receiver(vmClassName)
+                    .addParameter("intent", intentClassName)
+                    .addStatement("val wrapper = com.developersyndicate.mvikit.core.MviViewModelRegistry.getWrapper(this)")
+                    .addStatement("wrapper.dispatch(intent)")
+                    .build()
+            )
+
             // Composable collectEffects()
             fileSpecBuilder.addFunction(
                 FunSpec.builder("collectEffects")
@@ -887,30 +896,30 @@ class MviSymbolProcessor(
             )
 
             // Composable rememberLoginViewModel()
-            fileSpecBuilder.addFunction(
-                FunSpec.builder("remember${prefix}ViewModel")
-                    .addAnnotation(ClassName("androidx.compose.runtime", "Composable"))
-                    .addParameter(
-                        ParameterSpec.builder("factory", LambdaTypeName.get(receiver = null, returnType = vmClassName)).apply {
-                            if (hasNoArgConstructor) {
-                                defaultValue("{ %T() }", vmClassName)
-                            }
-                        }.build()
-                    )
-                    .returns(vmClassName)
-                    .addCode(
-                        CodeBlock.builder()
-                            .addStatement("val wrapper = androidx.lifecycle.viewmodel.compose.viewModel<%T>(", wrapperClassName)
-                            .addStatement("    initializer = {")
-                            .addStatement("        val savedStateHandle = this.createSavedStateHandle()")
-                            .addStatement("        %T(factory(), savedStateHandle)", wrapperClassName)
-                            .addStatement("    }")
-                            .addStatement(")")
-                            .addStatement("return wrapper.viewModel")
-                            .build()
-                    )
-                    .build()
-            )
+            val viewModelFun = FunSpec.builder("remember${prefix}ViewModel")
+                .addAnnotation(ClassName("androidx.compose.runtime", "Composable"))
+                .addParameter(
+                    ParameterSpec.builder("factory", LambdaTypeName.get(receiver = null, returnType = vmClassName)).apply {
+                        if (hasNoArgConstructor) {
+                            defaultValue("{ %T() }", vmClassName)
+                        }
+                    }.build()
+                )
+                .returns(vmClassName)
+                .addCode(
+                    CodeBlock.builder()
+                        .addStatement("val factoryProducer = androidx.lifecycle.viewmodel.viewModelFactory {")
+                        .addStatement("    initializer {")
+                        .addStatement("        val savedStateHandle = androidx.lifecycle.createSavedStateHandle()")
+                        .addStatement("        %T(factory(), savedStateHandle)", wrapperClassName)
+                        .addStatement("    }")
+                        .addStatement("}")
+                        .addStatement("val wrapper = androidx.lifecycle.viewmodel.compose.viewModel<%T>(factory = factoryProducer)", wrapperClassName)
+                        .addStatement("return wrapper.viewModel")
+                        .build()
+                )
+                .build()
+            fileSpecBuilder.addFunction(viewModelFun)
 
             // If form exists, generate the validate() extension function
             if (formSymbol != null) {
