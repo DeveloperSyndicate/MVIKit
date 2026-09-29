@@ -1,0 +1,87 @@
+name: Publish to Maven Central
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Validate Gradle Wrapper
+        uses: gradle/actions/wrapper-validation@v4
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Publish to Maven Central
+        run: ./gradlew publishToMavenCentral --no-configuration-cache
+        env:
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.GPG_PRIVATE_KEY }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ secrets.GPG_KEY_ID }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.GPG_PASSWORD }}
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+
+      - name: Extract Version and Release Notes
+        id: release_info
+        run: |
+          VERSION=$(grep -E 'version = "[^"]+"' build.gradle.kts | head -n 1 | sed -E 's/.*version = "([^"]+)".*/\1/')
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          
+          # Check for CHANGELOG.md notes or provide default
+          python3 -c "
+          import re, os
+          version = '$VERSION'
+          notes = f'Automated release of version {version} published to Maven Central.'
+          if os.path.exists('CHANGELOG.md'):
+              try:
+                  with open('CHANGELOG.md') as f:
+                      content = f.read()
+                  pattern = rf'##\s*\[(?:Unreleased\]\s*\(v{re.escape(version)}\)|{re.escape(version)}\])(?:[^\n]*)\n(.*?)(?=\n---\s*\n##\s*\[|\n##\s*\[|\Z)'
+                  match = re.search(pattern, content, re.DOTALL)
+                  if match:
+                      notes = match.group(1).strip()
+              except Exception:
+                  pass
+          
+          with open('release_notes.txt', 'w') as out:
+              out.write(notes)
+          "
+
+      - name: Create Git Tag and GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG_NAME="v${{ steps.release_info.outputs.VERSION }}"
+          
+          # Check if tag already exists in remote
+          if git ls-remote --tags origin | grep -q "refs/tags/$TAG_NAME"; then
+            echo "Tag $TAG_NAME already exists. Skipping release creation."
+          else
+            echo "Creating tag and release for $TAG_NAME"
+            git config --global user.name "github-actions[bot]"
+            git config --global user.email "github-actions[bot]@users.noreply.github.com"
+            
+            git tag $TAG_NAME
+            git push origin $TAG_NAME
+            
+            gh release create $TAG_NAME \
+              --title "Release $TAG_NAME" \
+              --notes-file release_notes.txt
+          fi
