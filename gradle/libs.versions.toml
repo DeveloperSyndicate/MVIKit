@@ -13,6 +13,8 @@ ksp = "2.2.21-2.0.5"
 kotlinpoet = "1.16.0"
 orbitMvi = "6.1.0"
 mavericks = "3.1.0"
+mavenPublish = "0.29.0"
+dokka = "1.9.20"
 
 
 [libraries]
@@ -52,5 +54,7 @@ kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
+maven-publish = { id = "com.vanniktech.maven.publish", version.ref = "mavenPublish" }
+dokka = { id = "org.jetbrains.dokka", version.ref = "dokka" }
 
 
