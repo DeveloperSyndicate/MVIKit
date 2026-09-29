@@ -561,6 +561,47 @@ class MviSymbolProcessor(
             val wrapperInitBlock = CodeBlock.builder()
             wrapperInitBlock.addStatement("io.mvikit.core.MviViewModelRegistry.register(viewModel, this)")
 
+            val rateLimitPolicyClassName = ClassName("io.mvikit.core.ratelimit", "RateLimitPolicy")
+            val durationMember = MemberName("kotlin.time.Duration.Companion", "milliseconds")
+
+            for (handler in handlers) {
+                val intentHandlerAnnotation = handler.annotations.firstOrNull { it.shortName.asString() == "IntentHandler" }
+                val rateLimitArg = intentHandlerAnnotation?.arguments?.firstOrNull { it.name?.asString() == "rateLimit" }?.value?.toString()
+                val durationMsArg = (intentHandlerAnnotation?.arguments?.firstOrNull { it.name?.asString() == "durationMs" }?.value as? Long)
+                    ?: (intentHandlerAnnotation?.arguments?.firstOrNull { it.name?.asString() == "durationMs" }?.value as? Number)?.toLong()
+                    ?: 0L
+
+                val rateLimitType = rateLimitArg?.substringAfterLast('.') ?: "NONE"
+                if (rateLimitType != "NONE" && durationMsArg > 0L) {
+                    val methodName = handler.simpleName.asString()
+                    val subclassName = methodName.replaceFirstChar { it.uppercase() }
+                    val subclassFq = ClassName(packageName, "${prefix}Intent", subclassName)
+
+                    val policyExpr = when (rateLimitType) {
+                        "DEBOUNCE" -> CodeBlock.of("%T.Debounce(%L.%M)", rateLimitPolicyClassName, durationMsArg, durationMember)
+                        "THROTTLE_FIRST" -> CodeBlock.of("%T.ThrottleFirst(%L.%M)", rateLimitPolicyClassName, durationMsArg, durationMember)
+                        "THROTTLE_LATEST" -> CodeBlock.of("%T.ThrottleLatest(%L.%M)", rateLimitPolicyClassName, durationMsArg, durationMember)
+                        else -> null
+                    }
+
+                    if (policyExpr != null) {
+                        val params = handler.parameters
+                        if (params.isEmpty()) {
+                            wrapperInitBlock.add(
+                                "registerRateLimitedIntent(%T::class, %L) { viewModel.%N() }\n",
+                                subclassFq, policyExpr, methodName
+                            )
+                        } else {
+                            val paramAccess = params.joinToString(", ") { "it.${it.name!!.asString()}" }
+                            wrapperInitBlock.add(
+                                "registerRateLimitedIntent(%T::class, %L) { viewModel.%N(%L) }\n",
+                                subclassFq, policyExpr, methodName, paramAccess
+                            )
+                        }
+                    }
+                }
+            }
+
             val viewModelScopeMember = MemberName("androidx.lifecycle", "viewModelScope")
             val launchMember = MemberName("kotlinx.coroutines", "launch")
             if (persistedProperties.isNotEmpty()) {

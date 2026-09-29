@@ -77,4 +77,39 @@ class SampleViewModelTestWithDsl {
             expectNoMoreEvents()
         }
     }
+
+    data class SearchState(val query: String = "", val searchesCount: Int = 0)
+    data class SearchQueryIntent(val text: String) : io.mvikit.core.intent.Intent
+
+    class SearchRateLimitViewModel : io.mvikit.core.ViewModel<SearchState, Unit>(SearchState()) {
+        init {
+            intentDebounce<SearchQueryIntent>(kotlin.time.DurationUnit.MILLISECONDS.let { kotlin.time.Duration.parse("200ms") }) { intent ->
+                reduce {
+                    copy(query = intent.text, searchesCount = searchesCount + 1)
+                }
+            }
+        }
+    }
+
+    @Test
+    fun testRateLimitedIntentHandlingWithDsl() = runTest {
+        val vm = SearchRateLimitViewModel()
+        vm.test {
+            expectState(SearchState(query = "", searchesCount = 0))
+
+            // Dispatch rapid queries
+            dispatch(SearchQueryIntent("a"))
+            dispatch(SearchQueryIntent("ab"))
+            dispatch(SearchQueryIntent("abc"))
+
+            // Advance past debounce window
+            testScheduler.advanceTimeBy(250)
+            testScheduler.advanceUntilIdle()
+
+            // Only the final debounced intent should produce a state update
+            expectState(SearchState(query = "abc", searchesCount = 1))
+
+            expectNoMoreEvents()
+        }
+    }
 }

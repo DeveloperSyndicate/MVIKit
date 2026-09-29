@@ -31,6 +31,10 @@ import kotlin.coroutines.Continuation
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.intrinsics.startCoroutineUninterceptedOrReturn
 import kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED
+import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.flow.debounce
+import io.mvikit.core.ratelimit.throttleFirst
+import io.mvikit.core.ratelimit.throttleLatest
 import io.mvikit.core.intent.IntentExecutionPolicy
 
 /**
@@ -113,6 +117,104 @@ abstract class ViewModel<STATE : Any, EFFECT : Any>(
 
 
 
+    private val rateLimitedPipelines = ConcurrentHashMap<kotlin.reflect.KClass<out Intent>, (Intent) -> Unit>()
+
+    /**
+     * Registers a debounced handler for a specific subtype [I] of [Intent].
+     *
+     * @param timeout The duration to wait for inactivity before executing the latest intent.
+     * @param handler The suspending handler block.
+     */
+    protected inline fun <reified I : Intent> intentDebounce(
+        timeout: kotlin.time.Duration,
+        noinline handler: suspend (I) -> Unit
+    ) {
+        registerRateLimitedIntent(
+            I::class,
+            io.mvikit.core.ratelimit.RateLimitPolicy.Debounce(timeout),
+            handler
+        )
+    }
+
+    /**
+     * Registers a throttled handler for a specific subtype [I] of [Intent] that executes the first
+     * intent immediately and drops subsequent intents within the [window].
+     *
+     * @param window The duration window in which subsequent intents are ignored.
+     * @param handler The suspending handler block.
+     */
+    protected inline fun <reified I : Intent> intentThrottleFirst(
+        window: kotlin.time.Duration,
+        noinline handler: suspend (I) -> Unit
+    ) {
+        registerRateLimitedIntent(
+            I::class,
+            io.mvikit.core.ratelimit.RateLimitPolicy.ThrottleFirst(window),
+            handler
+        )
+    }
+
+    /**
+     * Registers a throttled handler for a specific subtype [I] of [Intent] that executes the first
+     * intent immediately and executes the latest intent received during the [window] when the window ends.
+     *
+     * @param window The duration window for throttling.
+     * @param handler The suspending handler block.
+     */
+    protected inline fun <reified I : Intent> intentThrottleLatest(
+        window: kotlin.time.Duration,
+        noinline handler: suspend (I) -> Unit
+    ) {
+        registerRateLimitedIntent(
+            I::class,
+            io.mvikit.core.ratelimit.RateLimitPolicy.ThrottleLatest(window),
+            handler
+        )
+    }
+
+    /**
+     * Registers a rate-limited intent handler dynamically (used by DSL and KSP code generation).
+     */
+    @Suppress("UNCHECKED_CAST")
+    fun <I : Intent> registerRateLimitedIntent(
+        klass: kotlin.reflect.KClass<I>,
+        policy: io.mvikit.core.ratelimit.RateLimitPolicy,
+        handler: suspend (I) -> Unit
+    ) {
+        if (policy is io.mvikit.core.ratelimit.RateLimitPolicy.None) {
+            registerIntent(klass, handler)
+            return
+        }
+
+        val intentFlow = kotlinx.coroutines.flow.MutableSharedFlow<I>(extraBufferCapacity = 64)
+        rateLimitedPipelines[klass] = { incomingIntent ->
+            intentFlow.tryEmit(incomingIntent as I)
+        }
+
+        val rateLimitedFlow: kotlinx.coroutines.flow.Flow<I> = when (policy) {
+            is io.mvikit.core.ratelimit.RateLimitPolicy.Debounce -> {
+                @OptIn(FlowPreview::class)
+                intentFlow.debounce(policy.timeout.inWholeMilliseconds)
+            }
+            is io.mvikit.core.ratelimit.RateLimitPolicy.ThrottleFirst -> {
+                intentFlow.throttleFirst(policy.window)
+            }
+            is io.mvikit.core.ratelimit.RateLimitPolicy.ThrottleLatest -> {
+                intentFlow.throttleLatest(policy.window)
+            }
+            is io.mvikit.core.ratelimit.RateLimitPolicy.None -> intentFlow
+        }
+
+        viewModelScope.launch(dispatchContext) {
+            rateLimitedFlow.collect { rateLimitedIntent ->
+                executeChain(rateLimitedIntent, 0)
+            }
+        }
+
+        // Also register with intentRegistry so executeHandler can resolve it when executeChain reaches it
+        intentRegistry.register(klass as kotlin.reflect.KClass<Intent>, handler as suspend (Intent) -> Unit)
+    }
+
     /**
      * Registers a handler for a specific subtype [I] of [Intent].
      */
@@ -144,6 +246,12 @@ abstract class ViewModel<STATE : Any, EFFECT : Any>(
      * Dispatches the given [intent] to this ViewModel.
      */
     fun dispatch(intent: Intent) {
+        val rateLimitedSender = rateLimitedPipelines[intent::class]
+        if (rateLimitedSender != null) {
+            rateLimitedSender(intent)
+            return
+        }
+
         if (intentChannel != null) {
             intentChannel.trySend(intent)
         } else {
