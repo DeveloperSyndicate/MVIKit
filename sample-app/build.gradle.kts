@@ -61,6 +61,7 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.ktx)
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(project(":mvikit-test"))
     testImplementation(project(":mvikit-ksp"))
     testImplementation(libs.org.jetbrains.kotlin.ksp)
     testImplementation(libs.orbit.core)
