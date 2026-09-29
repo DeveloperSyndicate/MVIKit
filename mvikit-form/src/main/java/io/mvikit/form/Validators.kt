@@ -113,3 +113,37 @@ class MatchValidator<T>(
         return if (value == reference()) null else errorMessage
     }
 }
+
+/**
+ * Validates that a value matches the value of another field identified by [otherFieldName].
+ */
+class MatchFieldValidator<T>(
+    val otherFieldName: String,
+    private val errorMessage: String = "Values do not match"
+) : CrossFieldValidator<T> {
+    override fun validate(value: T, context: FormValidationContext): String? {
+        val otherValue = context.getFieldValue<T>(otherFieldName)
+        return if (value == otherValue) null else errorMessage
+    }
+}
+
+/**
+ * Validates that a value is provided (not null/blank) conditionally when [predicate] matches
+ * the value of [otherFieldName].
+ */
+class RequiredIfValidator<T>(
+    val otherFieldName: String,
+    private val predicate: (Any?) -> Boolean,
+    private val errorMessage: String = "Field is required"
+) : CrossFieldValidator<T> {
+    private val requiredDelegate = RequiredValidator(errorMessage)
+
+    override fun validate(value: T, context: FormValidationContext): String? {
+        val otherValue = context.getFieldValue<Any?>(otherFieldName)
+        return if (predicate(otherValue)) {
+            requiredDelegate.validate(value)
+        } else {
+            null
+        }
+    }
+}

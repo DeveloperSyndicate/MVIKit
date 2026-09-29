@@ -6,7 +6,8 @@ package io.mvikit.form
 class FieldDefinition<T>(
     val name: String,
     val initialValue: T,
-    val validators: List<Validator<T>>
+    val validators: List<Validator<T>>,
+    val dependsOn: Set<String> = emptySet()
 )
 
 /**
@@ -24,16 +25,45 @@ class FieldBuilder<T>(val name: String, val defaultValue: T) {
     val validators = mutableListOf<Validator<T>>()
 
     /**
+     * Names of other fields that this field depends on.
+     * When any dependency field changes, this field is automatically re-validated.
+     */
+    val dependencies = mutableSetOf<String>()
+
+    /**
+     * Explicitly declares field dependencies.
+     */
+    fun dependsOn(vararg fieldNames: String) {
+        dependencies.addAll(fieldNames)
+    }
+
+    /**
      * Registers a custom validator.
      */
     fun validateWith(validator: Validator<T>) {
         validators.add(validator)
+        if (validator is MatchFieldValidator<*>) {
+            dependencies.add(validator.otherFieldName)
+        } else if (validator is RequiredIfValidator<*>) {
+            dependencies.add(validator.otherFieldName)
+        }
+    }
+
+    /**
+     * Registers a contextual cross-field validator with explicit dependency names.
+     */
+    fun validateWithContext(
+        vararg dependsOn: String,
+        validator: (value: T, context: FormValidationContext) -> String?
+    ) {
+        dependencies.addAll(dependsOn)
+        validators.add(crossFieldValidator(validator))
     }
 
     /**
      * Builds the final immutable [FieldDefinition].
      */
-    fun build(): FieldDefinition<T> = FieldDefinition(name, initialValue, validators)
+    fun build(): FieldDefinition<T> = FieldDefinition(name, initialValue, validators, dependencies.toSet())
 }
 
 /**
@@ -53,6 +83,28 @@ fun <T> FieldBuilder<T>.required(message: String = "Field is required") {
  */
 fun <T> FieldBuilder<T>.match(reference: () -> T, message: String = "Fields do not match") {
     validators.add(MatchValidator(reference, message))
+}
+
+/**
+ * Adds a cross-field match validation rule checking that the field value equals the value of [otherFieldName].
+ * Also registers [otherFieldName] as a dependency so this field re-validates when [otherFieldName] changes.
+ */
+fun <T> FieldBuilder<T>.matchField(otherFieldName: String, message: String = "Fields do not match") {
+    dependencies.add(otherFieldName)
+    validators.add(MatchFieldValidator(otherFieldName, message))
+}
+
+/**
+ * Adds a conditional required validation rule. The field is required if [predicate] on [otherFieldName] returns true.
+ * Also registers [otherFieldName] as a dependency so this field re-validates when [otherFieldName] changes.
+ */
+fun <T> FieldBuilder<T>.requiredIf(
+    otherFieldName: String,
+    predicate: (Any?) -> Boolean,
+    message: String = "Field is required"
+) {
+    dependencies.add(otherFieldName)
+    validators.add(RequiredIfValidator(otherFieldName, predicate, message))
 }
 
 /**

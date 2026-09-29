@@ -13,16 +13,57 @@ class FormImpl(
     override val validationMode: ValidationMode
 ) : Form {
 
+    // Inverted dependency mapping: Source Field -> Set of Dependent Fields that observe it
+    private val dependencyGraph: Map<String, Set<String>> = run {
+        val graph = mutableMapOf<String, MutableSet<String>>()
+        definitions.forEach { (fieldName, def) ->
+            def.dependsOn.forEach { sourceField ->
+                graph.getOrPut(sourceField) { mutableSetOf() }.add(fieldName)
+            }
+        }
+        graph
+    }
+
+    private inner class FormValidationContextImpl(
+        private val currentFields: Map<String, FormField<*>>
+    ) : FormValidationContext {
+        @Suppress("UNCHECKED_CAST")
+        override fun <T> getFieldValue(fieldName: String): T? {
+            return currentFields[fieldName]?.value as? T
+        }
+
+        @Suppress("UNCHECKED_CAST")
+        override fun <T> getField(fieldName: String): FormField<T>? {
+            return currentFields[fieldName] as? FormField<T>
+        }
+
+        override fun containsField(fieldName: String): Boolean {
+            return currentFields.containsKey(fieldName)
+        }
+    }
+
     private val _fields = MutableStateFlow<Map<String, FormField<*>>>(
-        definitions.mapValues { (name, def) ->
-            val initialError = validateValue(name, def.initialValue)
-            FormField(
-                value = def.initialValue,
-                error = null,
-                touched = false,
-                dirty = false,
-                valid = initialError == null
-            )
+        run {
+            val initialSnapshot = definitions.mapValues { (_, def) ->
+                FormField(
+                    value = def.initialValue,
+                    error = null,
+                    touched = false,
+                    dirty = false,
+                    valid = true
+                )
+            }
+            val context = object : FormValidationContext {
+                @Suppress("UNCHECKED_CAST")
+                override fun <T> getFieldValue(fieldName: String): T? = initialSnapshot[fieldName]?.value as? T
+                @Suppress("UNCHECKED_CAST")
+                override fun <T> getField(fieldName: String): FormField<T>? = initialSnapshot[fieldName] as? FormField<T>
+                override fun containsField(fieldName: String): Boolean = initialSnapshot.containsKey(fieldName)
+            }
+            initialSnapshot.mapValues { (name, field) ->
+                val initialError = validateValue(name, field.value, context)
+                field.copy(valid = initialError == null)
+            }
         }
     )
     override val fields: StateFlow<Map<String, FormField<*>>> = _fields.asStateFlow()
@@ -34,11 +75,15 @@ class FormImpl(
     override val isTouched: Boolean get() = _fields.value.values.any { it.touched }
 
     @Suppress("UNCHECKED_CAST")
-    private fun <T> validateValue(name: String, value: T): String? {
+    private fun <T> validateValue(name: String, value: T, context: FormValidationContext): String? {
         val def = definitions[name] ?: return null
         val validators = def.validators as List<Validator<T>>
         for (validator in validators) {
-            val error = validator.validate(value)
+            val error = if (validator is CrossFieldValidator<T>) {
+                validator.validate(value, context)
+            } else {
+                validator.validate(value)
+            }
             if (error != null) return error
         }
         return null
@@ -47,8 +92,9 @@ class FormImpl(
     override fun validate(): ValidationResult {
         val errors = mutableMapOf<String, String>()
         _fields.update { currentFields ->
+            val context = FormValidationContextImpl(currentFields)
             currentFields.mapValues { (name, field) ->
-                val errorString = validateValue(name, field.value)
+                val errorString = validateValue(name, field.value, context)
                 if (errorString != null) {
                     errors[name] = errorString
                 }
@@ -68,8 +114,10 @@ class FormImpl(
     }
 
     override fun validateField(name: String): String? {
-        val field = _fields.value[name] ?: return null
-        val errorString = validateValue(name, field.value)
+        val current = _fields.value
+        val field = current[name] ?: return null
+        val context = FormValidationContextImpl(current)
+        val errorString = validateValue(name, field.value, context)
         val isValid = errorString == null
 
         _fields.update { currentFields ->
@@ -84,12 +132,24 @@ class FormImpl(
 
     override fun updateField(name: String, value: Any?, touched: Boolean?, dirty: Boolean?) {
         val def = definitions[name] ?: return
+        val affectedFields = mutableListOf<Pair<String, Any?>>()
+
         _fields.update { currentFields ->
             val field = currentFields[name] ?: return@update currentFields
             val isDirty = dirty ?: (value != def.initialValue)
             val isTouched = touched ?: field.touched
 
-            val errorString = validateValue(name, value)
+            // Tentatively apply the primary field update so the context sees the new value
+            val tentativelyUpdated = currentFields + (name to FormField(
+                value = value,
+                error = field.error,
+                touched = isTouched,
+                dirty = isDirty,
+                valid = field.valid
+            ))
+
+            val context = FormValidationContextImpl(tentativelyUpdated)
+            val errorString = validateValue(name, value, context)
             val isValid = errorString == null
 
             val showError = when (validationMode) {
@@ -99,17 +159,66 @@ class FormImpl(
                 ValidationMode.MANUAL -> field.error != null
             }
 
-            val newField = FormField(
+            val updatedPrimary = FormField(
                 value = value,
                 error = if (showError) errorString else null,
                 touched = isTouched,
                 dirty = isDirty,
                 valid = isValid
             )
-            currentFields + (name to newField)
+
+            var nextFields = currentFields + (name to updatedPrimary)
+
+            // Cascading re-validation: find all fields that directly or indirectly depend on this field
+            val dependentNames = resolveAllDependents(name)
+            for (depName in dependentNames) {
+                val depField = nextFields[depName] ?: continue
+                val depContext = FormValidationContextImpl(nextFields)
+                val depError = validateValue(depName, depField.value, depContext)
+                val depIsValid = depError == null
+
+                val showDepError = when (validationMode) {
+                    ValidationMode.ON_CHANGE -> true
+                    ValidationMode.ON_BLUR -> depField.touched
+                    ValidationMode.ON_SUBMIT -> depField.error != null
+                    ValidationMode.MANUAL -> depField.error != null
+                }
+
+                val updatedDep = FormField(
+                    value = depField.value,
+                    error = if (showDepError) depError else null,
+                    touched = depField.touched,
+                    dirty = depField.dirty,
+                    valid = depIsValid
+                )
+                nextFields = nextFields + (depName to updatedDep)
+                affectedFields.add(depName to depField.value)
+            }
+
+            nextFields
         }
 
         observers.forEach { it.onFieldChanged(name, value) }
+    }
+
+    private fun resolveAllDependents(sourceField: String): Set<String> {
+        val result = linkedSetOf<String>()
+        val queue = ArrayDeque<String>()
+        dependencyGraph[sourceField]?.let { queue.addAll(it) }
+
+        while (queue.isNotEmpty()) {
+            val dep = queue.removeFirst()
+            if (result.add(dep)) {
+                dependencyGraph[dep]?.let { nextLevel ->
+                    for (next in nextLevel) {
+                        if (!result.contains(next)) {
+                            queue.add(next)
+                        }
+                    }
+                }
+            }
+        }
+        return result
     }
 
     override fun markTouched(name: String) {
@@ -117,7 +226,8 @@ class FormImpl(
             val field = currentFields[name] ?: return@update currentFields
             if (field.touched) return@update currentFields
 
-            val errorString = validateValue(name, field.value)
+            val context = FormValidationContextImpl(currentFields)
+            val errorString = validateValue(name, field.value, context)
             val isValid = errorString == null
 
             val showError = when (validationMode) {
@@ -135,15 +245,25 @@ class FormImpl(
     }
 
     override fun reset() {
-        _fields.value = definitions.mapValues { (name, def) ->
-            val initialError = validateValue(name, def.initialValue)
+        val initialSnapshot = definitions.mapValues { (_, def) ->
             FormField(
                 value = def.initialValue,
                 error = null,
                 touched = false,
                 dirty = false,
-                valid = initialError == null
+                valid = true
             )
+        }
+        val context = object : FormValidationContext {
+            @Suppress("UNCHECKED_CAST")
+            override fun <T> getFieldValue(fieldName: String): T? = initialSnapshot[fieldName]?.value as? T
+            @Suppress("UNCHECKED_CAST")
+            override fun <T> getField(fieldName: String): FormField<T>? = initialSnapshot[fieldName] as? FormField<T>
+            override fun containsField(fieldName: String): Boolean = initialSnapshot.containsKey(fieldName)
+        }
+        _fields.value = initialSnapshot.mapValues { (name, field) ->
+            val initialError = validateValue(name, field.value, context)
+            field.copy(valid = initialError == null)
         }
     }
 
