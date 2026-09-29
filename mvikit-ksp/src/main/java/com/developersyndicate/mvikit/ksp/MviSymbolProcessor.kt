@@ -794,6 +794,7 @@ class MviSymbolProcessor(
                 .addImport("androidx.compose.runtime", "collectAsState")
                 .addImport("androidx.lifecycle", "createSavedStateHandle")
                 .addImport("androidx.lifecycle.viewmodel", "viewModelFactory", "initializer")
+                .addImport("androidx.lifecycle.viewmodel.compose", "viewModel")
 
             // val LoginViewModel.state: LoginState
             fileSpecBuilder.addProperty(
@@ -909,13 +910,13 @@ class MviSymbolProcessor(
                 .returns(vmClassName)
                 .addCode(
                     CodeBlock.builder()
-                        .addStatement("val factoryProducer = androidx.lifecycle.viewmodel.viewModelFactory {")
+                        .addStatement("val factoryProducer = viewModelFactory {")
                         .addStatement("    initializer {")
-                        .addStatement("        val savedStateHandle = androidx.lifecycle.createSavedStateHandle()")
+                        .addStatement("        val savedStateHandle = createSavedStateHandle()")
                         .addStatement("        %T(factory(), savedStateHandle)", wrapperClassName)
                         .addStatement("    }")
                         .addStatement("}")
-                        .addStatement("val wrapper = androidx.lifecycle.viewmodel.compose.viewModel<%T>(factory = factoryProducer)", wrapperClassName)
+                        .addStatement("val wrapper: %T = viewModel(modelClass = %T::class.java, factory = factoryProducer)", wrapperClassName, wrapperClassName)
                         .addStatement("return wrapper.viewModel")
                         .build()
                 )
