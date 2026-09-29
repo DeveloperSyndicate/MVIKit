@@ -209,16 +209,16 @@ plugins {
 ```kotlin
 dependencies {
     // Core MVI, Compose & Form components
-    implementation("com.developersyndicate.mvikit:mvikit-core:0.0.1-alpha")
-    implementation("com.developersyndicate.mvikit:mvikit-compose:0.0.1-alpha")
-    implementation("com.developersyndicate.mvikit:mvikit-form:0.0.1-alpha")
-    implementation("com.developersyndicate.mvikit:mvikit-navigation:0.0.1-alpha")
+    implementation("com.developersyndicate.mvikit:mvikit-core:0.0.2-alpha")
+    implementation("com.developersyndicate.mvikit:mvikit-compose:0.0.2-alpha")
+    implementation("com.developersyndicate.mvikit:mvikit-form:0.0.2-alpha")
+    implementation("com.developersyndicate.mvikit:mvikit-navigation:0.0.2-alpha")
 
     // KSP Code Generator
-    ksp("com.developersyndicate.mvikit:mvikit-ksp:0.0.1-alpha")
+    ksp("com.developersyndicate.mvikit:mvikit-ksp:0.0.2-alpha")
 
     // Unit Testing DSL
-    testImplementation("com.developersyndicate.mvikit:mvikit-test:0.0.1-alpha")
+    testImplementation("com.developersyndicate.mvikit:mvikit-test:0.0.2-alpha")
 }
 ```
 

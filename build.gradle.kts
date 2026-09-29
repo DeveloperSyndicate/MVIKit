@@ -11,7 +11,7 @@ plugins {
 
 allprojects {
     group = "com.developersyndicate.mvikit"
-    version = "0.0.1-alpha"
+    version = "0.0.2-alpha"
 }
 
 subprojects {

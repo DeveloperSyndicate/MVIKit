@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.0.2-alpha] - 2026-09-29
+
+### Fixed
+- **Compose ViewModel Instantiation (`mvikit-ksp`)**:
+  - Fixed `'this' is not defined in this context` in generated `remember*ViewModel()` extension functions by switching to `viewModelFactory { initializer { ... } }` and explicit `viewModel(modelClass, factory)` overload.
+  - Added missing imports (`androidx.lifecycle.viewmodel.compose.viewModel`, `viewModelFactory`, `initializer`, and `createSavedStateHandle`) to generated extensions file.
+- **Direct Intent Dispatching**:
+  - Generated direct `dispatch(intent)` extension function on `@MviViewModel` classes, eliminating manual `when(intent)` boilerplate in Compose screens.
+- **Transitive Dependencies (`mvikit-compose` & `mvikit-core`)**:
+  - Exported core lifecycle, viewmodel, compose, and coroutine dependencies via `api(...)` so consumer applications resolve standard AndroidX symbols transitively without duplicate declarations.
+- **Local Maven Publishing (`build.gradle.kts`)**:
+  - Made publication signing conditional so `publishToMavenLocal` succeeds without requiring configured GPG secret keys in local environments.
+
+---
+
 ## [0.0.1-alpha] - 2026-09-29
 
 ### Added
