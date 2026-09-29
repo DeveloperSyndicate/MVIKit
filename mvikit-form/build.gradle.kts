@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace = "io.mvikit.form"
+    namespace = "com.developersyndicate.mvikit.form"
     compileSdk = 37
 
     defaultConfig {

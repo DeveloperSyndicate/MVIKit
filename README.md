@@ -47,7 +47,7 @@ sealed interface SignUpEffect {
 Extend `MviViewModel<STATE, EFFECT>`, defining custom intents using `reduce {}` for state updates and `launchIntent {}` / `effect()` for side effects.
 
 ```kotlin
-import io.mvikit.core.MviViewModel
+import com.developersyndicate.mvikit.core.MviViewModel
 
 class SignUpViewModel : MviViewModel<SignUpState, SignUpEffect>(
     initialState = SignUpState()
@@ -84,8 +84,8 @@ Bind your state and handle side effects in your composables safely.
 ```kotlin
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import io.mvikit.compose.collectState
-import io.mvikit.compose.CollectEffects
+import com.developersyndicate.mvikit.compose.collectState
+import com.developersyndicate.mvikit.compose.CollectEffects
 
 @Composable
 fun SignUpScreen(viewModel: SignUpViewModel) {

@@ -6,11 +6,11 @@ plugins {
 }
 
 android {
-    namespace = "io.mvikit.sample"
+    namespace = "com.developersyndicate.mvikit.sample"
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "io.mvikit.sample"
+        applicationId = "com.developersyndicate.mvikit.sample"
         minSdk = 23
         targetSdk = 37
         versionCode = 1

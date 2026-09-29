@@ -3,15 +3,15 @@
 
 # Retain all Form model fields and validation annotations for reflection or code-gen safety
 -keepclassmembers class * {
-    @io.mvikit.annotations.Form <fields>;
-    @io.mvikit.annotations.Form <methods>;
-    @io.mvikit.annotations.Required <fields>;
-    @io.mvikit.annotations.Email <fields>;
-    @io.mvikit.annotations.Password <fields>;
-    @io.mvikit.annotations.Min <fields>;
-    @io.mvikit.annotations.Max <fields>;
-    @io.mvikit.annotations.Pattern <fields>;
-    @io.mvikit.annotations.DependentValidation <fields>;
+    @com.developersyndicate.mvikit.annotations.Form <fields>;
+    @com.developersyndicate.mvikit.annotations.Form <methods>;
+    @com.developersyndicate.mvikit.annotations.Required <fields>;
+    @com.developersyndicate.mvikit.annotations.Email <fields>;
+    @com.developersyndicate.mvikit.annotations.Password <fields>;
+    @com.developersyndicate.mvikit.annotations.Min <fields>;
+    @com.developersyndicate.mvikit.annotations.Max <fields>;
+    @com.developersyndicate.mvikit.annotations.Pattern <fields>;
+    @com.developersyndicate.mvikit.annotations.DependentValidation <fields>;
 }
 
 # Retain generated form validators
@@ -20,4 +20,4 @@
     public <methods>;
 }
 
--keep class io.mvikit.form.** { *; }
+-keep class com.developersyndicate.mvikit.form.** { *; }

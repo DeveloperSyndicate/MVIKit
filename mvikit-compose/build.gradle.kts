@@ -5,7 +5,7 @@ plugins {
 }
 
 android {
-    namespace = "io.mvikit.compose"
+    namespace = "com.developersyndicate.mvikit.compose"
     compileSdk = 37
 
     defaultConfig {

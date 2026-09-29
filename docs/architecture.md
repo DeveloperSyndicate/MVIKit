@@ -43,7 +43,7 @@ graph TD
   * **Single Emission**: Exactly one collector consumes each effect, preventing duplicate event execution.
 
 ### Structured Concurrency & Coroutines
-* `launchIntent` executes asynchronous work in the [viewModelScope](file:///Users/sanjay/Documents/VibeCode/MVIKitSampleApp/mvikit-core/src/main/java/io/mvikit/core/MviViewModel.kt).
+* `launchIntent` executes asynchronous work in the [viewModelScope](file:///Users/sanjays/Documents/vibecode/MVIKit/mvikit-core/src/main/java/com/developersyndicate/mvikit/core/ViewModel.kt).
 * **SupervisorJob Integration**: Because `viewModelScope` uses `SupervisorJob` by default under the hood, if one launched intent fails (e.g. throws a network exception), it does not cancel the parent scope or other sibling intents.
 * **Uncaught Exception Routing**: An internal `CoroutineExceptionHandler` intercepts uncaught exceptions within `launchIntent` blocks, routing them directly to `onError(throwable)`. This provides a global error handling boundary for the ViewModel.
 
@@ -54,7 +54,7 @@ graph TD
 Phase 2 introduces a strongly typed, declarative intent system that separates user action descriptions from implementation details.
 
 ### Intent Marker
-The framework defines a lightweight marker interface `io.mvikit.core.intent.Intent`. All user actions must implement this marker:
+The framework defines a lightweight marker interface `com.developersyndicate.mvikit.core.intent.Intent`. All user actions must implement this marker:
 ```kotlin
 sealed interface CounterIntent : Intent {
     data object Increment : CounterIntent
@@ -428,7 +428,7 @@ init {
 }
 
 // Phase 6
-@io.mvikit.annotations.MviViewModel
+@com.developersyndicate.mvikit.annotations.MviViewModel
 class MyViewModel : MviViewModel<...> {
     init {
         registerGeneratedIntents()

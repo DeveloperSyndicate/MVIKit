@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace = "io.mvikit.navigation"
+    namespace = "com.developersyndicate.mvikit.navigation"
     compileSdk = 37
 
     defaultConfig {

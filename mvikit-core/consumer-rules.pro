@@ -2,23 +2,23 @@
 -keepattributes *Annotation*, InnerClasses, EnclosingMethod, Signature
 
 # Retain State data class members and properties
--keepclassmembers class * implements io.mvikit.core.state.State {
+-keepclassmembers class * implements com.developersyndicate.mvikit.core.state.State {
     <fields>;
     <methods>;
 }
 
 # Retain Intent and Effect interfaces and their implementations
--keep interface io.mvikit.core.intent.Intent { *; }
--keep interface io.mvikit.core.intent.Effect { *; }
--keep class * implements io.mvikit.core.intent.Intent { *; }
--keep class * implements io.mvikit.core.intent.Effect { *; }
+-keep interface com.developersyndicate.mvikit.core.intent.Intent { *; }
+-keep interface com.developersyndicate.mvikit.core.intent.Effect { *; }
+-keep class * implements com.developersyndicate.mvikit.core.intent.Intent { *; }
+-keep class * implements com.developersyndicate.mvikit.core.intent.Effect { *; }
 
 # Retain RateLimit and DuplicateAction policies
--keep class io.mvikit.core.action.** { *; }
--keep class io.mvikit.core.ratelimit.** { *; }
+-keep class com.developersyndicate.mvikit.core.action.** { *; }
+-keep class com.developersyndicate.mvikit.core.ratelimit.** { *; }
 
 # Retain SavedStateHandle persistence utilities
--keep class io.mvikit.core.persistence.** { *; }
+-keep class com.developersyndicate.mvikit.core.persistence.** { *; }
 
 # Retain annotations
--keep class io.mvikit.annotations.** { *; }
+-keep class com.developersyndicate.mvikit.annotations.** { *; }

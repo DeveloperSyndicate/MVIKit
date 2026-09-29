@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace = "io.mvikit.test"
+    namespace = "com.developersyndicate.mvikit.test"
     compileSdk = 37
 
     defaultConfig {

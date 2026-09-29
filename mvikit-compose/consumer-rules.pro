@@ -2,4 +2,4 @@
 -keepattributes *Annotation*
 
 # Retain Compose UI helpers and effect collection extensions
--keep class io.mvikit.compose.** { *; }
+-keep class com.developersyndicate.mvikit.compose.** { *; }
