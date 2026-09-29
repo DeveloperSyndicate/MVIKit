@@ -116,6 +116,12 @@ class MviSymbolProcessor(
             if (!isParentMviViewModel) {
                 logger.error("@IntentHandler can only be declared inside @MviViewModel annotated classes", symbol)
             }
+            if (symbol.modifiers.contains(Modifier.PRIVATE) || symbol.modifiers.contains(Modifier.PROTECTED)) {
+                logger.error("@IntentHandler function '${symbol.simpleName.asString()}' cannot be private or protected.", symbol)
+            }
+            if (symbol.modifiers.contains(Modifier.SUSPEND)) {
+                logger.error("@IntentHandler function '${symbol.simpleName.asString()}' cannot be suspend. Use @MviAction for asynchronous/suspending operations.", symbol)
+            }
         }
 
         // Validate @MviAction
@@ -130,7 +136,107 @@ class MviSymbolProcessor(
             if (!isParentMviViewModel) {
                 logger.error("@MviAction can only be declared inside @MviViewModel annotated classes", symbol)
             }
+            if (symbol.modifiers.contains(Modifier.PRIVATE) || symbol.modifiers.contains(Modifier.PROTECTED)) {
+                logger.error("@MviAction function '${symbol.simpleName.asString()}' cannot be private or protected.", symbol)
+            }
         }
+
+        // Validate @Persist types
+        val persistSymbols = resolver.getSymbolsWithAnnotation("io.mvikit.annotations.Persist").toList()
+        for (symbol in persistSymbols) {
+            val type = when (symbol) {
+                is KSPropertyDeclaration -> symbol.type.resolve()
+                is KSValueParameter -> symbol.type.resolve()
+                else -> null
+            }
+            if (type != null) {
+                if (!isBundleSupportedType(type)) {
+                    val name = when (symbol) {
+                        is KSPropertyDeclaration -> symbol.simpleName.asString()
+                        is KSValueParameter -> symbol.name?.asString() ?: "param"
+                        else -> "element"
+                    }
+                    val typeName = type.declaration.qualifiedName?.asString() ?: type.toString()
+                    logger.error(
+                        "@Persist property '$name' has unsupported type '$typeName'. " +
+                        "Persisted properties must be primitives, String, Parcelable, Serializable, or standard collections/arrays thereof.",
+                        symbol
+                    )
+                }
+            }
+        }
+
+        // Validate @DeepLink route uniqueness
+        val deepLinkSymbols = resolver.getSymbolsWithAnnotation("io.mvikit.annotations.DeepLink").toList()
+        val registeredRoutes = mutableMapOf<String, KSClassDeclaration>()
+        for (symbol in deepLinkSymbols) {
+            if (symbol !is KSClassDeclaration) continue
+            val annotation = symbol.annotations.firstOrNull { it.shortName.asString() == "DeepLink" } ?: continue
+            val route = annotation.arguments.firstOrNull { it.name?.asString() == "route" }?.value?.toString() ?: ""
+            if (route.isNotBlank()) {
+                if (registeredRoutes.containsKey(route)) {
+                    val conflict = registeredRoutes[route]!!
+                    logger.error(
+                        "Duplicate @DeepLink route '$route' found on '${symbol.simpleName.asString()}'. " +
+                        "This conflicts with route declared on '${conflict.simpleName.asString()}'.",
+                        symbol
+                    )
+                } else {
+                    registeredRoutes[route] = symbol
+                }
+            }
+        }
+    }
+
+    private fun isBundleSupportedType(type: KSType): Boolean {
+        val qName = type.declaration.qualifiedName?.asString() ?: return true
+        val supportedPrimitivesAndStrings = setOf(
+            "kotlin.String",
+            "kotlin.CharSequence",
+            "kotlin.Int",
+            "kotlin.Long",
+            "kotlin.Boolean",
+            "kotlin.Float",
+            "kotlin.Double",
+            "kotlin.Byte",
+            "kotlin.Short",
+            "kotlin.Char",
+            "kotlin.ByteArray",
+            "kotlin.ShortArray",
+            "kotlin.IntArray",
+            "kotlin.LongArray",
+            "kotlin.FloatArray",
+            "kotlin.DoubleArray",
+            "kotlin.BooleanArray",
+            "kotlin.CharArray"
+        )
+        if (supportedPrimitivesAndStrings.contains(qName)) return true
+
+        // Check common collections
+        if (qName == "kotlin.collections.List" || qName == "kotlin.collections.ArrayList" || qName == "kotlin.collections.Set") {
+            val typeArg = type.arguments.firstOrNull()?.type?.resolve()
+            return if (typeArg != null) isBundleSupportedType(typeArg) else true
+        }
+        if (qName == "kotlin.collections.Map" || qName == "kotlin.collections.HashMap") {
+            val valArg = type.arguments.getOrNull(1)?.type?.resolve()
+            return if (valArg != null) isBundleSupportedType(valArg) else true
+        }
+
+        // Check supertypes for Parcelable or Serializable
+        fun hasSupportedSupertype(decl: KSDeclaration): Boolean {
+            if (decl !is KSClassDeclaration) return false
+            for (superType in decl.superTypes) {
+                val superDecl = superType.resolve().declaration
+                val superName = superDecl.qualifiedName?.asString()
+                if (superName == "android.os.Parcelable" || superName == "java.io.Serializable") {
+                    return true
+                }
+                if (hasSupportedSupertype(superDecl)) return true
+            }
+            return false
+        }
+
+        return hasSupportedSupertype(type.declaration)
     }
 
     // --- Helper to get default values for state fields ---

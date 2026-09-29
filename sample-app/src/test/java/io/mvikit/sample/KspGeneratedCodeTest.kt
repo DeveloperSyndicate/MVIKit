@@ -175,7 +175,10 @@ class KspGeneratedCodeTest {
             ) as com.google.devtools.ksp.symbol.KSName
         }
 
-        fun createAnnotation(fqName: String): com.google.devtools.ksp.symbol.KSAnnotation {
+        fun createAnnotation(
+            fqName: String,
+            args: Map<String, Any?> = emptyMap()
+        ): com.google.devtools.ksp.symbol.KSAnnotation {
             val nameProxy = createKSName(fqName)
             val shortNameVal = fqName.substringAfterLast('.')
             val shortNameProxy = createKSName(shortNameVal)
@@ -203,10 +206,27 @@ class KspGeneratedCodeTest {
                 arrayOf(com.google.devtools.ksp.symbol.KSTypeReference::class.java),
                 typeRefHandler
             )
+
+            val ksValueArgs = args.map { (k, v) ->
+                val argHandler = java.lang.reflect.InvocationHandler { _, method, _ ->
+                    when (method.name) {
+                        "getName" -> createKSName(k)
+                        "getValue" -> v
+                        else -> null
+                    }
+                }
+                java.lang.reflect.Proxy.newProxyInstance(
+                    com.google.devtools.ksp.symbol.KSValueArgument::class.java.classLoader,
+                    arrayOf(com.google.devtools.ksp.symbol.KSValueArgument::class.java),
+                    argHandler
+                ) as com.google.devtools.ksp.symbol.KSValueArgument
+            }
+
             val annHandler = java.lang.reflect.InvocationHandler { _, method, _ ->
                 when (method.name) {
                     "getAnnotationType" -> typeRefProxy
                     "getShortName" -> shortNameProxy
+                    "getArguments" -> ksValueArgs
                     else -> null
                 }
             }
@@ -222,15 +242,19 @@ class KspGeneratedCodeTest {
         fun createClassDeclaration(
             isClass: Boolean,
             isDataClass: Boolean,
-            annotations: List<String> = emptyList(),
-            decls: List<com.google.devtools.ksp.symbol.KSDeclaration>? = null
+            annotations: List<Any> = emptyList(),
+            decls: List<com.google.devtools.ksp.symbol.KSDeclaration>? = null,
+            simpleName: String = "SomeClass"
         ): com.google.devtools.ksp.symbol.KSClassDeclaration {
             val classHandler = java.lang.reflect.InvocationHandler { _, method, _ ->
                 when (method.name) {
                     "getClassKind" -> if (isClass) com.google.devtools.ksp.symbol.ClassKind.CLASS else com.google.devtools.ksp.symbol.ClassKind.INTERFACE
                     "getModifiers" -> if (isDataClass) setOf(com.google.devtools.ksp.symbol.Modifier.DATA) else emptySet()
-                    "getAnnotations" -> annotations.map { createAnnotation(it) }.asSequence()
-                    "getQualifiedName" -> createKSName("io.mvikit.sample.SomeClass")
+                    "getSimpleName" -> createKSName(simpleName)
+                    "getAnnotations" -> annotations.map {
+                        if (it is com.google.devtools.ksp.symbol.KSAnnotation) it else createAnnotation(it.toString())
+                    }.asSequence()
+                    "getQualifiedName" -> createKSName("io.mvikit.sample.$simpleName")
                     "getDeclarations" -> (decls ?: vmDeclarations).asSequence()
                     else -> null
                 }
@@ -246,7 +270,8 @@ class KspGeneratedCodeTest {
             name: String,
             parent: com.google.devtools.ksp.symbol.KSDeclaration?,
             annotations: List<String> = emptyList(),
-            parameters: List<com.google.devtools.ksp.symbol.KSValueParameter> = emptyList()
+            parameters: List<com.google.devtools.ksp.symbol.KSValueParameter> = emptyList(),
+            modifiers: Set<com.google.devtools.ksp.symbol.Modifier> = emptySet()
         ): com.google.devtools.ksp.symbol.KSFunctionDeclaration {
             val funcHandler = java.lang.reflect.InvocationHandler { _, method, _ ->
                 when (method.name) {
@@ -255,7 +280,7 @@ class KspGeneratedCodeTest {
                     "getAnnotations" -> annotations.map { createAnnotation(it) }.asSequence()
                     "getParameters" -> parameters
                     "getFunctionKind" -> com.google.devtools.ksp.symbol.FunctionKind.MEMBER
-                    "getModifiers" -> emptySet<com.google.devtools.ksp.symbol.Modifier>()
+                    "getModifiers" -> modifiers
                     "getTypeParameters" -> emptyList<com.google.devtools.ksp.symbol.KSTypeParameter>()
                     else -> null
                 }
@@ -321,6 +346,25 @@ class KspGeneratedCodeTest {
         vmDeclarations.add(handler1)
         vmDeclarations.add(handler2)
 
+        // 6. Test private and suspend @IntentHandler
+        val privateHandler = createFunctionDeclaration("privateHandler", vmWithDuplicateHandlers, listOf("io.mvikit.annotations.IntentHandler"), emptyList(), setOf(com.google.devtools.ksp.symbol.Modifier.PRIVATE))
+        val suspendHandler = createFunctionDeclaration("suspendHandler", vmWithDuplicateHandlers, listOf("io.mvikit.annotations.IntentHandler"), emptyList(), setOf(com.google.devtools.ksp.symbol.Modifier.SUSPEND))
+
+        // 7. Duplicate @DeepLink route detection
+        val dlAnnotation = createAnnotation("io.mvikit.annotations.DeepLink", mapOf("route" to "mvikit://duplicate"))
+        val dlScreen1 = createClassDeclaration(
+            isClass = true,
+            isDataClass = false,
+            annotations = listOf(dlAnnotation),
+            simpleName = "ScreenOne"
+        )
+        val dlScreen2 = createClassDeclaration(
+            isClass = true,
+            isDataClass = false,
+            annotations = listOf(dlAnnotation),
+            simpleName = "ScreenTwo"
+        )
+
         // Mock Resolver
         val resolverHandler = java.lang.reflect.InvocationHandler { _, method, args ->
             if (method.name == "getSymbolsWithAnnotation") {
@@ -328,8 +372,10 @@ class KspGeneratedCodeTest {
                 when (annotation) {
                     "io.mvikit.annotations.Form" -> sequenceOf(invalidFormSymbol)
                     "io.mvikit.annotations.MviViewModel" -> sequenceOf(invalidVmSymbol, vmWithDuplicateHandlers)
-                    "io.mvikit.annotations.IntentHandler" -> sequenceOf(invalidHandlerSymbol, handler1, handler2)
+                    "io.mvikit.annotations.IntentHandler" -> sequenceOf(invalidHandlerSymbol, handler1, handler2, privateHandler, suspendHandler)
                     "io.mvikit.annotations.MviAction" -> sequenceOf(invalidActionSymbol)
+                    "io.mvikit.annotations.DeepLink" -> sequenceOf(dlScreen1, dlScreen2)
+                    "io.mvikit.annotations.Persist" -> emptySequence()
                     else -> emptySequence()
                 }
             } else {
@@ -366,5 +412,8 @@ class KspGeneratedCodeTest {
         assertTrue(testLogger.errors.any { it.contains("@IntentHandler can only be declared inside @MviViewModel annotated classes") })
         assertTrue(testLogger.errors.any { it.contains("@MviAction can only be declared inside @MviViewModel annotated classes") })
         assertTrue(testLogger.errors.any { it.contains("Duplicate @IntentHandler function name 'UpdateEmail' (normalized to 'UpdateEmail')") })
+        assertTrue(testLogger.errors.any { it.contains("@IntentHandler function 'privateHandler' cannot be private or protected") })
+        assertTrue(testLogger.errors.any { it.contains("@IntentHandler function 'suspendHandler' cannot be suspend") })
+        assertTrue(testLogger.errors.any { it.contains("Duplicate @DeepLink route") })
     }
 }
