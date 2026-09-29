@@ -793,6 +793,7 @@ class MviSymbolProcessor(
             val fileSpecBuilder = FileSpec.builder(packageName, "${prefix}ViewModel_Extensions")
                 .addImport("androidx.compose.runtime", "collectAsState")
                 .addImport("androidx.lifecycle", "createSavedStateHandle")
+                .addImport("androidx.lifecycle.viewmodel", "viewModelFactory", "initializer")
 
             // val LoginViewModel.state: LoginState
             fileSpecBuilder.addProperty(
