@@ -370,19 +370,35 @@ class MviSymbolProcessor(
             stateProperties["validationErrors"] = Map::class.asClassName().parameterizedBy(STRING, STRING)
             stateProperties["errorMessage"] = STRING.copy(nullable = true)
 
-            // Gather all persisted properties
-            val persistedProperties = mutableSetOf<String>()
+            // Gather all persisted properties mapping: Property Name -> Bundle Key
+            val persistedProperties = mutableMapOf<String, String>()
             if (formSymbol != null) {
-                for (prop in formSymbol.getDeclaredProperties()) {
-                    persistedProperties.add(prop.simpleName.asString())
+                val declaredProps = formSymbol.getDeclaredProperties().toList()
+                val hasAnyExplicitPersist = declaredProps.any { prop ->
+                    prop.annotations.any { it.shortName.asString() == "Persist" }
+                }
+
+                for (prop in declaredProps) {
+                    val name = prop.simpleName.asString()
+                    val persistAnn = prop.annotations.firstOrNull { it.shortName.asString() == "Persist" }
+                    if (persistAnn != null) {
+                        val customKey = persistAnn.arguments.firstOrNull { it.name?.asString() == "key" }?.value?.toString()
+                        val key = if (!customKey.isNullOrBlank()) customKey else name
+                        persistedProperties[name] = key
+                    } else if (!hasAnyExplicitPersist) {
+                        // Backward compatibility: If no @Persist is explicitly declared on any field, persist all form properties
+                        persistedProperties[name] = name
+                    }
                 }
             }
             for (handler in handlers) {
                 for (param in handler.parameters) {
                     val name = param.name!!.asString()
-                    val hasPersist = param.annotations.any { it.shortName.asString() == "Persist" }
-                    if (hasPersist) {
-                        persistedProperties.add(name)
+                    val persistAnn = param.annotations.firstOrNull { it.shortName.asString() == "Persist" }
+                    if (persistAnn != null) {
+                        val customKey = persistAnn.arguments.firstOrNull { it.name?.asString() == "key" }?.value?.toString()
+                        val key = if (!customKey.isNullOrBlank()) customKey else name
+                        persistedProperties[name] = key
                     }
                 }
             }
@@ -530,8 +546,9 @@ class MviSymbolProcessor(
                 superclassInitCode.add("    if (savedStateHandle != null) {\n")
                 superclassInitCode.add("        %T(\n", stateClassName)
                 for ((name, typeName) in stateProperties) {
-                    if (persistedProperties.contains(name)) {
-                        superclassInitCode.add("            %N = savedStateHandle.get<%T>(%S) ?: ", name, typeName, name)
+                    val bundleKey = persistedProperties[name]
+                    if (bundleKey != null) {
+                        superclassInitCode.add("            %N = savedStateHandle.get<%T>(%S) ?: ", name, typeName, bundleKey)
                         val defaultValue = getDefaultValueLiteral(typeName)
                         superclassInitCode.add("%L,\n", defaultValue)
                     } else {
@@ -608,8 +625,8 @@ class MviSymbolProcessor(
                 wrapperInitBlock.add("if (savedStateHandle != null) {\n")
                 wrapperInitBlock.add("    this.%M.%M {\n", viewModelScopeMember, launchMember)
                 wrapperInitBlock.add("        state.collect { currentState ->\n")
-                for (name in persistedProperties) {
-                    wrapperInitBlock.add("            savedStateHandle[%S] = currentState.%N\n", name, name)
+                for ((propName, bundleKey) in persistedProperties) {
+                    wrapperInitBlock.add("            savedStateHandle[%S] = currentState.%N\n", bundleKey, propName)
                 }
                 wrapperInitBlock.add("        }\n")
                 wrapperInitBlock.add("    }\n")

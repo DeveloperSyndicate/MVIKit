@@ -1,9 +1,11 @@
 package io.mvikit.annotations
 
 /**
- * Annotation used to mark parameters of `@IntentHandler` functions that should be persisted
- * inside the Android `SavedStateHandle`.
+ * Annotation used to mark properties or `@IntentHandler` parameters that should be automatically
+ * persisted inside the Android `SavedStateHandle`.
+ *
+ * @property key Optional custom bundle key. If blank or omitted, the property name is used.
  */
-@Target(AnnotationTarget.VALUE_PARAMETER)
+@Target(AnnotationTarget.PROPERTY, AnnotationTarget.FIELD, AnnotationTarget.VALUE_PARAMETER)
 @Retention(AnnotationRetention.SOURCE)
-annotation class Persist
+annotation class Persist(val key: String = "")

@@ -69,10 +69,12 @@ class AuthRepository {
 // 3. Form Validation Model
 @Form
 data class LoginForm(
+    @Persist
     @Required("Email is required")
     @Email("Invalid email format")
     val email: String = "",
 
+    @Persist
     @Required("Password is required")
     @Password(minLength = 6, message = "Password must be at least 6 characters")
     val password: String = ""
